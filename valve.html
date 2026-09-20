@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="ru" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3-х Ходовой Смесительный Клапан — Управление</title>
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- MQTT Library -->
+    <script src="https://unpkg.com/mqtt@4.3.7/dist/mqtt.min.js"></script>
+
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        cardBg: '#1e293b',
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #060911;
+            color: #f1f5f9;
+        }
+
+        .glass-card {
+            background: rgba(26, 36, 56, 0.85);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        input[type=range] { 
+            accent-color: #f59e0b; 
+        }
+
+        /* Dynamic hydraulic flow animation */
+        @keyframes flowDash {
+            to {
+                stroke-dashoffset: -24;
+            }
+        }
+
+        .animated-flow {
+            stroke-dasharray: 8 8;
+            animation: flowDash 0.8s linear infinite;
+            transition: opacity 0.3s ease, stroke 0.3s ease;
+        }
+
+        /* Smooth shutter rotation */
+        .shutter-transition {
+            transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            transform-origin: 0px 0px;
+        }
+    </style>
+</head>
+<body class="min-h-screen pb-12 pt-4 px-2 sm:px-4">
+
+    <!-- HEADER -->
+    <header class="max-w-[1400px] mx-auto mb-4">
+        <div class="glass-card p-4 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xl">
+            <div class="flex items-center gap-3 sm:gap-4">
+                <a href="index.html" class="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl font-bold text-xs border border-slate-700 transition flex items-center gap-2 shrink-0">
+                    <i class="fa-solid fa-arrow-left"></i> <span class="hidden xs:inline">На Дашборд</span>
+                </a>
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-600 to-orange-600 flex items-center justify-center shadow-lg text-white font-bold text-lg shrink-0">
+                        <i class="fa-solid fa-arrows-split-up-and-left"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-sm sm:text-base font-extrabold text-white flex flex-wrap items-center gap-2">
+                            3-х Ходовой Смесительный Клапан
+                            <span class="bg-amber-900/80 text-amber-300 border border-amber-500/50 text-[10px] px-2 py-0.5 rounded-full font-normal">
+                                Защита от конденсата
+                            </span>
+                        </h1>
+                        <p class="text-[11px] text-slate-400">
+                            Поддержание целевой температуры обратки котла (T<sub>обратка</sub> &ge; 60 °C)
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-2 sm:gap-3 self-end sm:self-auto">
+                <button onclick="openMqttModal()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-xl border border-slate-700 transition flex items-center gap-1.5 cursor-pointer">
+                    <i class="fa-solid fa-gear text-amber-400"></i>
+                    <span class="hidden sm:inline">MQTT Настройки</span>
+                </button>
+                <div id="mqttStatusBadge" class="px-3 py-1.5 rounded-xl border border-amber-500/40 bg-amber-950/30 text-amber-400 text-xs font-bold flex items-center gap-2 cursor-pointer" onclick="openMqttModal()">
+                    <span id="mqttDot" class="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span>
+                    <span id="mqttStatusText">MQTT: Отключено</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- MAIN METRICS PANEL -->
+    <main class="max-w-[1400px] mx-auto space-y-6">
+
+        <div class="grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
+            
+            <!-- Target Inlet Setpoint -->
+            <div class="glass-card p-3.5 sm:p-4 rounded-2xl flex items-center justify-between border-emerald-500/30">
+                <div>
+                    <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Уставка (T<sub>уст</sub>)</div>
+                    <div id="dispInletSetpoint" class="text-xl sm:text-2xl font-mono font-extrabold text-emerald-400">60.0 °C</div>
+                    <span class="text-[10px] text-slate-500">Заданный минимум</span>
+                </div>
+                <div class="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-emerald-950 border border-emerald-500/40 text-emerald-400 flex items-center justify-center text-base sm:text-lg shrink-0">
+                    <i class="fa-solid fa-bullseye"></i>
+                </div>
+            </div>
+
+            <!-- Actual Inlet Sensor DS18B20 -->
+            <div id="cardInletFact" class="glass-card p-3.5 sm:p-4 rounded-2xl flex items-center justify-between border-amber-500/30">
+                <div>
+                    <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Факт DS18B20</div>
+                    <div id="dispInletFact" class="text-xl sm:text-2xl font-mono font-extrabold text-amber-400">58.0 °C</div>
+                    <span id="dispInletStatus" class="text-[10px] font-bold text-amber-400 block truncate max-w-[120px]">Подгрев (Подмес)</span>
+                </div>
+                <div id="iconInletFact" class="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-amber-950 border border-amber-500/40 text-amber-400 flex items-center justify-center text-base sm:text-lg shrink-0">
+                    <i class="fa-solid fa-microchip"></i>
+                </div>
+            </div>
+
+            <!-- Calculated Theoretical Mixed Temp -->
+            <div class="glass-card p-3.5 sm:p-4 rounded-2xl flex items-center justify-between border-indigo-500/30">
+                <div>
+                    <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Теория смеси (T<sub>расчёт</sub>)</div>
+                    <div id="dispInletCalc" class="text-xl sm:text-2xl font-mono font-extrabold text-indigo-400">50.3 °C</div>
+                    <span class="text-[10px] text-slate-500">Модель баланса</span>
+                </div>
+                <div class="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-indigo-950 border border-indigo-500/40 text-indigo-400 flex items-center justify-center text-base sm:text-lg shrink-0">
+                    <i class="fa-solid fa-calculator"></i>
+                </div>
+            </div>
+
+            <!-- Calculated Valve Position -->
+            <div class="glass-card p-3.5 sm:p-4 rounded-2xl flex items-center justify-between border-sky-500/30">
+                <div>
+                    <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Байпас котла</div>
+                    <div id="dispValvePos" class="text-xl sm:text-2xl font-mono font-extrabold text-sky-400">45 %</div>
+                    <span id="dispValveModeBadge" class="text-[10px] font-bold text-sky-400">Автомат (ПИД)</span>
+                </div>
+                <div class="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-sky-950 border border-sky-500/40 text-sky-400 flex items-center justify-center text-base sm:text-lg shrink-0">
+                    <i class="fa-solid fa-gauge"></i>
+                </div>
+            </div>
+
+            <!-- Boiler Supply Temp -->
+            <div class="glass-card p-3.5 sm:p-4 rounded-2xl flex items-center justify-between border-red-500/30 col-span-2 lg:col-span-1">
+                <div>
+                    <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Подача (T<sub>котла</sub>)</div>
+                    <div id="dispBoilerTemp" class="text-xl sm:text-2xl font-mono font-extrabold text-red-400">75.0 °C</div>
+                    <span class="text-[10px] text-slate-500">Горячий поток</span>
+                </div>
+                <div class="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-red-950 border border-red-500/40 text-red-400 flex items-center justify-center text-base sm:text-lg shrink-0">
+                    <i class="fa-solid fa-fire"></i>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- VISUAL SCHEME AND VALVE DIAGRAM -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+            <!-- Interactive Responsive Hydraulic Diagram -->
+            <div class="lg:col-span-7 glass-card p-3 sm:p-5 rounded-3xl space-y-4">
+                <h2 class="text-xs sm:text-sm font-bold text-white flex flex-wrap items-center justify-between border-b border-slate-800 pb-2.5 gap-2">
+                    <span class="flex items-center gap-2">
+                        <i class="fa-solid fa-diagram-project text-amber-400"></i> Схема смешения теплоносителя
+                    </span>
+                    <span class="text-[11px] font-mono bg-slate-800 text-slate-300 px-2.5 py-0.5 rounded-full border border-slate-700">
+                        Сверху: Котёл | Справа: Буфер | Слева: Обратка котла
+                    </span>
+                </h2>
+
+                <!-- Vector SVG Diagram -->
+                <div class="relative w-full bg-slate-950 rounded-2xl border border-slate-800 p-2 overflow-hidden shadow-inner flex items-center justify-center">
+                    
+                    <svg viewBox="0 0 800 620" class="w-full h-auto max-h-[580px]" preserveAspectRatio="xMidYMid meet">
+                        <defs>
+                            <filter id="valveGlow" x="-20%" y="-20%" width="140%" height="140%">
+                                <feGaussianBlur stdDeviation="6" result="blur" />
+                                <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                            </filter>
+                        </defs>
+
+                        <!-- BACK PANEL -->
+                        <rect x="10" y="10" width="780" height="600" rx="24" fill="#030712" stroke="#1e293b" stroke-width="2"/>
+
+                        <!-- PIPES (Thick lines with animated flows) -->
+
+                        <!-- TOP PIPE: Hot Supply from Boiler (Enters valve from top) -->
+                        <path id="pipeHotBg" d="M 400,105 L 400,240" fill="none" stroke="#ef4444" stroke-width="22" stroke-linecap="round"/>
+                        <path id="pipeHotFlow" d="M 400,105 L 400,240" fill="none" stroke="#fca5a5" stroke-width="6" stroke-linecap="round" class="animated-flow"/>
+
+                        <!-- RIGHT PIPE: Cold Return from Buffer (Enters valve from right) -->
+                        <path id="pipeColdBg" d="M 680,330 L 490,330" fill="none" stroke="#3b82f6" stroke-width="22" stroke-linecap="round"/>
+                        <path id="pipeColdFlow" d="M 680,330 L 490,330" fill="none" stroke="#93c5fd" stroke-width="6" stroke-linecap="round" class="animated-flow"/>
+
+                        <!-- LEFT PIPE: Mixed Flow into Boiler Return (Exits valve to left) -->
+                        <path id="pipeMixedBg" d="M 310,330 L 120,330" fill="none" stroke="#10b981" stroke-width="24" stroke-linecap="round"/>
+                        <path id="pipeMixedFlow" d="M 310,330 L 120,330" fill="none" stroke="#ffffff" stroke-width="6" stroke-linecap="round" opacity="0.9" class="animated-flow"/>
+
+                        <!-- ================= CENTRAL ENLARGED VALVE BODY ================= -->
+                        <g transform="translate(400, 330)">
+                            
+                            <!-- Outer Square Housing -->
+                            <rect x="-105" y="-105" width="210" height="210" rx="32" fill="#0f172a" stroke="#f59e0b" stroke-width="3.5" filter="url(#valveGlow)"/>
+                            
+                            <!-- Header Text inside Housing -->
+                            <text x="0" y="-76" text-anchor="middle" fill="#fbbf24" font-size="12" font-weight="800" letter-spacing="0.5">3-Х ХОДОВОЙ КЛАПАН</text>
+
+                            <!-- Internal Round Chamber -->
+                            <circle cx="0" cy="0" r="68" fill="#020617" stroke="#334155" stroke-width="4"/>
+
+                            <!-- Port Entry Indicators on Chamber -->
+                            <!-- Top Port A (Hot) -->
+                            <rect x="-14" y="-71" width="28" height="10" rx="3" fill="#ef4444"/>
+                            <!-- Right Port B (Cold) -->
+                            <rect x="61" y="-14" width="10" height="28" rx="3" fill="#3b82f6"/>
+                            <!-- Left Port AB (Mixed Output) -->
+                            <rect x="-71" y="-14" width="10" height="28" rx="3" id="svgMixedPortIndicator" fill="#10b981"/>
+
+                            <!-- PHYSICAL ROTATING SHUTTER / SECTOR BLADE & ACTUATOR HANDLE -->
+                            <!-- Sector starts covering TOP port (-135deg to -45deg) at 0% position. Rotates +90deg to cover RIGHT port at 100% position. -->
+                            <g id="valveShutterGroup" class="shutter-transition">
+                                <!-- Sector shutter blade -->
+                                <path d="M 0,0 L -43.84,-43.84 A 62,62 0 0,1 43.84,-43.84 Z" fill="#f59e0b" opacity="0.88" stroke="#ffffff" stroke-width="2"/>
+                                <!-- Position Pointer Needle / Handle -->
+                                <line x1="0" y1="0" x2="0" y2="-55" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round"/>
+                                <polygon points="0,-60 -6,-48 6,-48" fill="#ffffff"/>
+                                <!-- Central Actuator Pivot Cap -->
+                                <circle cx="0" cy="0" r="16" fill="#f59e0b" stroke="#ffffff" stroke-width="2.5"/>
+                                <circle cx="0" cy="0" r="6" fill="#0f172a"/>
+                            </g>
+
+                            <!-- SERVO ACTUATOR CAP / MOTOR BADGE OVER PIVOT -->
+                            <g transform="translate(0, 0)" pointer-events="none">
+                                <circle cx="0" cy="0" r="22" fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="3 3"/>
+                            </g>
+
+                            <!-- Percentage & Status Text inside Valve Box -->
+                            <text x="0" y="78" text-anchor="middle" fill="#94a3b8" font-size="11" font-weight="600">Заслонка байпаса:</text>
+                            <text id="svgValvePosPercent" x="0" y="96" text-anchor="middle" fill="#f59e0b" font-size="17" font-family="monospace" font-weight="800">45%</text>
+                        </g>
+
+                        <!-- ================= PORT BADGES & LABELS ================= -->
+
+                        <!-- TOP PORT BADGE: "ВХОД С КОТЛА" -->
+                        <g transform="translate(240, 25)">
+                            <rect width="320" height="75" rx="16" fill="#0f172a" stroke="#ef4444" stroke-width="2.5" opacity="0.95"/>
+                            <circle cx="28" cy="26" r="8" fill="#ef4444"/>
+                            <text x="46" y="30" fill="#fca5a5" font-size="13" font-weight="800">ВХОД С КОТЛА (ГОРАЧАЯ)</text>
+                            <text x="28" y="58" fill="#94a3b8" font-size="12">Температура T<tspan font-size="9" dy="2">котла</tspan><tspan dy="-2">:</tspan></text>
+                            <text id="diagramTempHot" x="220" y="60" text-anchor="middle" fill="#ef4444" font-size="22" font-family="monospace" font-weight="900">75.0 °C</text>
+                        </g>
+
+                        <!-- RIGHT PORT BADGE: "БУФЕРНАЯ ЁМКОСТЬ" -->
+                        <g transform="translate(500, 292)">
+                            <rect width="270" height="75" rx="16" fill="#0f172a" stroke="#3b82f6" stroke-width="2.5" opacity="0.95"/>
+                            <circle cx="24" cy="26" r="8" fill="#3b82f6"/>
+                            <text x="40" y="30" fill="#93c5fd" font-size="12" font-weight="800">БУФЕРНАЯ ЁМКОСТЬ</text>
+                            <text x="24" y="58" fill="#94a3b8" font-size="12">Низ буфера T<tspan font-size="9" dy="2">4</tspan><tspan dy="-2">:</tspan></text>
+                            <text id="diagramTempCold" x="195" y="60" text-anchor="middle" fill="#3b82f6" font-size="20" font-family="monospace" font-weight="900">30.0 °C</text>
+                        </g>
+
+                        <!-- LEFT PORT BADGE: "МИКС (ВХОД В КОТЁЛ)" -->
+                        <g transform="translate(30, 292)">
+                            <rect id="mixedBadgeBg" width="260" height="75" rx="16" fill="#0f172a" stroke="#10b981" stroke-width="2.5" opacity="0.95"/>
+                            <circle id="mixedBadgeDot" cx="24" cy="26" r="8" fill="#10b981"/>
+                            <text id="mixedBadgeTitle" x="40" y="30" fill="#6ee7b7" font-size="12" font-weight="800">МИКС (ВХОД В КОТЁЛ)</text>
+                            <text x="24" y="58" fill="#94a3b8" font-size="12">DS18B20:</text>
+                            <text id="diagramTempMixed" x="170" y="60" text-anchor="middle" fill="#10b981" font-size="20" font-family="monospace" font-weight="900">58.0 °C</text>
+                        </g>
+
+                        <!-- BOTTOM EXPLANATION IN DIAGRAM -->
+                        <g transform="translate(180, 520)">
+                            <rect width="440" height="55" rx="14" fill="#090d16" stroke="#334155" stroke-width="1.5"/>
+                            <text x="220" y="24" text-anchor="middle" fill="#cbd5e1" font-size="12" font-weight="600">Соотношение смешивания в клапане:</text>
+                            <text id="svgMixRatioSummary" x="220" y="44" text-anchor="middle" fill="#f59e0b" font-size="13" font-family="monospace" font-weight="800">Байпас котла: 45% | Низ буфера: 55%</text>
+                        </g>
+
+                    </svg>
+
+                </div>
+
+                <!-- QUICK PRESET BUTTONS FOR TESTING -->
+                <div class="p-3 bg-slate-900/90 rounded-2xl border border-slate-800 space-y-2">
+                    <span class="text-[11px] font-bold text-slate-400 block uppercase tracking-wider">Быстрые пресеты положения заслонки:</span>
+                    <div class="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                        <button onclick="applyPresetPos(0)" class="py-1.5 px-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl border border-slate-700 transition cursor-pointer text-center">
+                            0% (Холод)
+                        </button>
+                        <button onclick="applyPresetPos(25)" class="py-1.5 px-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl border border-slate-700 transition cursor-pointer text-center">
+                            25%
+                        </button>
+                        <button onclick="applyPresetPos(50)" class="py-1.5 px-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl border border-slate-700 transition cursor-pointer text-center">
+                            50% (Микс)
+                        </button>
+                        <button onclick="applyPresetPos(75)" class="py-1.5 px-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl border border-slate-700 transition cursor-pointer text-center">
+                            75%
+                        </button>
+                        <button onclick="applyPresetPos(100)" class="py-1.5 px-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl border border-slate-700 transition cursor-pointer text-center">
+                            100% (Байпас)
+                        </button>
+                        <button onclick="setValveControlMode('auto')" class="py-1.5 px-2 bg-amber-900/60 hover:bg-amber-800/80 text-amber-300 text-xs font-bold rounded-xl border border-amber-500/40 transition cursor-pointer text-center">
+                            <i class="fa-solid fa-robot"></i> Авто
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CONTROLS AND SETPOINT PANEL -->
+            <div class="lg:col-span-5 glass-card p-5 sm:p-6 rounded-3xl space-y-5 flex flex-col justify-between">
+                <div>
+                    <h2 class="text-xs sm:text-sm font-bold text-white flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
+                        <span class="flex items-center gap-2">
+                            <i class="fa-solid fa-sliders text-amber-400"></i> Настройка Режима и Уставок
+                        </span>
+                        <span id="actuatorStatus" class="text-[10px] font-mono font-bold text-slate-400 bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
+                            Привод: Статичен
+                        </span>
+                    </h2>
+
+                    <!-- Mode switch: Auto / Manual -->
+                    <div class="p-3.5 bg-slate-900/90 rounded-2xl border border-slate-800 space-y-2 mb-4">
+                        <div class="flex justify-between items-center text-xs font-semibold">
+                            <span class="text-slate-300">Режим управления сервоприводом:</span>
+                            <span id="lblValveMode" class="text-amber-400 font-bold font-mono">АВТОМАТИЧЕСКИЙ</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 pt-1">
+                            <button onclick="setValveControlMode('auto')" id="btnModeAuto" class="py-2.5 px-3 text-xs font-bold rounded-xl bg-amber-600 text-white transition shadow cursor-pointer flex items-center justify-center gap-1.5">
+                                <i class="fa-solid fa-robot"></i> Автомат (ПИД)
+                            </button>
+                            <button onclick="setValveControlMode('manual')" id="btnModeManual" class="py-2.5 px-3 text-xs font-bold rounded-xl bg-slate-800 text-slate-400 hover:bg-slate-700 transition cursor-pointer flex items-center justify-center gap-1.5">
+                                <i class="fa-solid fa-hand"></i> Ручной
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Inlet Temperature Setpoint Slider -->
+                    <div class="p-4 bg-slate-900/90 rounded-2xl border border-slate-800 space-y-3">
+                        <div class="flex justify-between items-center">
+                            <label for="sliderInletSet" class="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
+                                <i class="fa-solid fa-thermometer-half"></i> Целевая температура обратки:
+                            </label>
+                            <span id="valInletSet" class="text-base font-mono font-extrabold text-emerald-400">60.0 °C</span>
+                        </div>
+                        <input type="range" id="sliderInletSet" min="45" max="75" value="60" step="0.5" oninput="onInletSetpointChange(this.value)" class="w-full h-2 bg-slate-700 rounded-lg cursor-pointer">
+                        <p class="text-[11px] text-slate-400 leading-relaxed">
+                            При значении ниже 55 °C возникает риск образования точки росы и низкотемпературной коррозии чугунного/стального теплообменника.
+                        </p>
+                    </div>
+
+                    <!-- Manual Slider (Only active in Manual Mode) -->
+                    <div id="manualSliderBox" class="p-4 bg-slate-900/90 rounded-2xl border border-slate-800 space-y-3 mt-4 opacity-50 pointer-events-none transition-all">
+                        <div class="flex justify-between items-center">
+                            <label for="sliderManualPos" class="text-xs font-bold text-sky-400 flex items-center gap-1.5">
+                                <i class="fa-solid fa-compass"></i> Ручное открытие байпаса (%):
+                            </label>
+                            <span id="valManualPos" class="text-base font-mono font-extrabold text-sky-400">45 %</span>
+                        </div>
+                        <input type="range" id="sliderManualPos" min="0" max="100" value="45" step="1" oninput="onManualPosChange(this.value)" class="w-full h-2 bg-slate-700 rounded-lg cursor-pointer">
+                        <span class="text-[10px] text-slate-400 block">0% = Только низ буфера | 100% = Полный байпас подачи котла</span>
+                    </div>
+                </div>
+
+                <!-- Clean Formatted Algorithm Card -->
+                <div class="p-3.5 bg-slate-950/80 rounded-2xl border border-amber-500/30 text-xs space-y-1.5 mt-4">
+                    <span class="font-bold text-amber-300 flex items-center gap-1.5">
+                        <i class="fa-solid fa-calculator"></i> Алгоритм расчёта подмеса:
+                    </span>
+                    <div class="text-slate-200 font-mono text-[11px] bg-slate-900 p-2 rounded-xl border border-slate-800 text-center">
+                        Положение (%) = <span class="inline-block border-b border-slate-600 px-1">T<sub>уставка</sub> - T₄</span> / <span class="inline-block px-1">T<sub>котёл</sub> - T₄</span> &times; 100%
+                    </div>
+                    <p class="text-[11px] text-slate-400 leading-snug">
+                        Автоматически подмешивает горячий поток из подачи котла к холодной воде из буфера (T₄), гарантируя защиту котла от термошока.
+                    </p>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- LOG & TELEMETRY MONITOR -->
+        <div class="glass-card p-4 sm:p-6 rounded-2xl shadow-xl space-y-3">
+            <h2 class="text-xs sm:text-sm font-bold text-white flex items-center justify-between border-b border-slate-800 pb-3">
+                <span class="flex items-center gap-2">
+                    <i class="fa-solid fa-terminal text-emerald-400"></i> Журнал событий и MQTT телеметрии
+                </span>
+                <button onclick="clearLog()" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-xl border border-slate-700 transition cursor-pointer">
+                    Очистить
+                </button>
+            </h2>
+
+            <div id="valveLogConsole" class="h-36 overflow-y-auto font-mono text-[11px] space-y-1 bg-slate-950 p-3 rounded-xl border border-slate-800 text-slate-300">
+                <div class="text-slate-500 italic">Ожидание сообщений брокера...</div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- MQTT CONFIG SETTINGS MODAL -->
+    <div id="mqttModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
+        <div class="glass-card p-6 rounded-3xl max-w-md w-full space-y-4 border-amber-500/30">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                    <i class="fa-solid fa-sliders text-amber-400"></i> Параметры брокера MQTT
+                </h3>
+                <button onclick="closeMqttModal()" class="text-slate-400 hover:text-white transition">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+
+            <div class="space-y-3 text-xs">
+                <div>
+                    <label class="text-[11px] text-slate-400 font-semibold block mb-1">WSS Хост</label>
+                    <input id="cfgModalHost" type="text" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-amber-500">
+                </div>
+                <div>
+                    <label class="text-[11px] text-slate-400 font-semibold block mb-1">WSS Порт</label>
+                    <input id="cfgModalPort" type="number" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-amber-500">
+                </div>
+                <div>
+                    <label class="text-[11px] text-slate-400 font-semibold block mb-1">Префикс Топика</label>
+                    <input id="cfgModalPrefix" type="text" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-amber-500">
+                </div>
+                <div>
+                    <label class="text-[11px] text-slate-400 font-semibold block mb-1">Логин</label>
+                    <input id="cfgModalUser" type="text" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-amber-500">
+                </div>
+                <div>
+                    <label class="text-[11px] text-slate-400 font-semibold block mb-1">Пароль</label>
+                    <input id="cfgModalPassword" type="password" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-amber-500">
+                </div>
+            </div>
+
+            <div class="flex gap-2 pt-2">
+                <button onclick="saveAndReconnectMqtt()" class="w-full py-2.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold rounded-xl transition cursor-pointer">
+                    Сохранить и Подключить
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- JS LOGIC -->
+    <script>
+        // State variables
+        let tempBoiler = 75.0;
+        let tempT4 = 30.0;
+        let tempInletFact = 58.0;
+        let inletSetpoint = 60.0;
+        let valvePosition = 45; // 0% = full cold, 100% = full hot bypass
+        let prevValvePosition = 45;
+        let valveControlMode = 'auto'; // 'auto' or 'manual'
+
+        let mqttClient = null;
+        let isMqttConnected = false;
+        let isUpdatingFromMqtt = false;
+
+        let mqttSettings = {
+            host: "m4.wqtt.ru",
+            port: 6247,
+            prefix: "home/heating",
+            user: "didrik",
+            password: "7777777"
+        };
+
+        function loadMqttSettings() {
+            try {
+                const saved = localStorage.getItem('mqtt_heating_config');
+                if (saved) {
+                    mqttSettings = { ...mqttSettings, ...JSON.parse(saved) };
+                }
+            } catch(e) {}
+        }
+
+        function saveMqttSettingsToStorage() {
+            try {
+                localStorage.setItem('mqtt_heating_config', JSON.stringify(mqttSettings));
+            } catch(e) {}
+        }
+
+        // Hydraulic & Theoretical Mix Calculations
+        function calculateAutoValvePos() {
+            if (tempBoiler <= tempT4) return 100;
+            let ratio = (inletSetpoint - tempT4) / (tempBoiler - tempT4);
+            return Math.round(Math.max(0, Math.min(100, ratio * 100)));
+        }
+
+        function calculateTheoreticalMixTemp() {
+            let ratio = valvePosition / 100;
+            return (ratio * tempBoiler) + ((1 - ratio) * tempT4);
+        }
+
+        // Color helper for fluid temperatures
+        function getTempColorHex(temp) {
+            if (temp <= 35) return "#3b82f6"; // Cold Blue
+            if (temp >= 72) return "#ef4444"; // Hot Red
+            if (temp >= 58 && temp <= 65) return "#10b981"; // Target Emerald Green
+            if (temp < 58) return "#f59e0b"; // Warm Amber
+            return "#f97316"; // Orange
+        }
+
+        function updateUI() {
+            if (valveControlMode === 'auto') {
+                valvePosition = calculateAutoValvePos();
+            }
+
+            const theoreticalMix = calculateTheoreticalMixTemp();
+
+            // Text metric updates
+            document.getElementById('dispInletSetpoint').innerText = inletSetpoint.toFixed(1) + ' °C';
+            document.getElementById('valInletSet').innerText = inletSetpoint.toFixed(1) + ' °C';
+            document.getElementById('dispInletFact').innerText = tempInletFact.toFixed(1) + ' °C';
+            document.getElementById('dispInletCalc').innerText = theoreticalMix.toFixed(1) + ' °C';
+            document.getElementById('dispValvePos').innerText = valvePosition + ' %';
+            document.getElementById('valManualPos').innerText = valvePosition + ' %';
+            document.getElementById('dispBoilerTemp').innerText = tempBoiler.toFixed(1) + ' °C';
+
+            // Actuator movement indicator
+            const actuatorStatus = document.getElementById('actuatorStatus');
+            if (valvePosition > prevValvePosition) {
+                actuatorStatus.innerText = 'Привод: Открывает байпас ▲';
+                actuatorStatus.className = 'text-[10px] font-mono font-bold text-amber-400 bg-amber-950 px-2 py-0.5 rounded border border-amber-500/40 animate-pulse';
+            } else if (valvePosition < prevValvePosition) {
+                actuatorStatus.innerText = 'Привод: Прикрывает байпас ▼';
+                actuatorStatus.className = 'text-[10px] font-mono font-bold text-sky-400 bg-sky-950 px-2 py-0.5 rounded border border-sky-500/40 animate-pulse';
+            } else {
+                actuatorStatus.innerText = 'Привод: Статичен';
+                actuatorStatus.className = 'text-[10px] font-mono font-bold text-slate-400 bg-slate-900 px-2 py-0.5 rounded border border-slate-800';
+            }
+            prevValvePosition = valvePosition;
+
+            // Diagram text updates
+            document.getElementById('diagramTempHot').textContent = tempBoiler.toFixed(1) + ' °C';
+            document.getElementById('diagramTempCold').textContent = tempT4.toFixed(1) + ' °C';
+            document.getElementById('diagramTempMixed').textContent = tempInletFact.toFixed(1) + ' °C';
+            document.getElementById('svgValvePosPercent').textContent = valvePosition + '%';
+
+            const coldPct = 100 - valvePosition;
+            document.getElementById('svgMixRatioSummary').textContent = `Байпас котла: ${valvePosition}% | Низ буфера: ${coldPct}%`;
+
+            // SVG ROTATING SHUTTER
+            // Position 0% (All Cold) -> Shutter covers top hot inlet (-135deg to -45deg)
+            // Position 100% (All Hot) -> Shutter rotates +90deg clockwise to cover right cold inlet
+            const shutterAngle = (valvePosition / 100) * 90;
+            const shutterEl = document.getElementById('valveShutterGroup');
+            if (shutterEl) {
+                shutterEl.setAttribute('transform', `rotate(${shutterAngle})`);
+            }
+
+            // Pipe Dynamic Colors & Flow Animation Opacity
+            const hotColor = getTempColorHex(tempBoiler);
+            const coldColor = getTempColorHex(tempT4);
+            const mixedColor = getTempColorHex(tempInletFact);
+
+            const pipeHotBg = document.getElementById('pipeHotBg');
+            const pipeColdBg = document.getElementById('pipeColdBg');
+            const pipeMixedBg = document.getElementById('pipeMixedBg');
+
+            const pipeHotFlow = document.getElementById('pipeHotFlow');
+            const pipeColdFlow = document.getElementById('pipeColdFlow');
+
+            if (pipeHotBg) pipeHotBg.setAttribute('stroke', hotColor);
+            if (pipeColdBg) pipeColdBg.setAttribute('stroke', coldColor);
+            if (pipeMixedBg) pipeMixedBg.setAttribute('stroke', mixedColor);
+
+            // Flow opacity depends on valve position
+            if (pipeHotFlow) pipeHotFlow.setAttribute('opacity', (valvePosition / 100).toString());
+            if (pipeColdFlow) pipeColdFlow.setAttribute('opacity', ((100 - valvePosition) / 100).toString());
+
+            // Left Port Badge dynamic styling
+            const mixedBadgeBg = document.getElementById('mixedBadgeBg');
+            const mixedBadgeDot = document.getElementById('mixedBadgeDot');
+            const mixedBadgeTitle = document.getElementById('mixedBadgeTitle');
+            const diagramTempMixed = document.getElementById('diagramTempMixed');
+            const svgMixedPortIndicator = document.getElementById('svgMixedPortIndicator');
+
+            if (mixedBadgeBg) mixedBadgeBg.setAttribute('stroke', mixedColor);
+            if (mixedBadgeDot) mixedBadgeDot.setAttribute('fill', mixedColor);
+            if (mixedBadgeTitle) mixedBadgeTitle.setAttribute('fill', mixedColor);
+            if (diagramTempMixed) diagramTempMixed.setAttribute('fill', mixedColor);
+            if (svgMixedPortIndicator) svgMixedPortIndicator.setAttribute('fill', mixedColor);
+
+            // Status Badge & Main Sensor Card Styling
+            const statusEl = document.getElementById('dispInletStatus');
+            const cardInletFact = document.getElementById('cardInletFact');
+            const iconInletFact = document.getElementById('iconInletFact');
+
+            if (tempInletFact < inletSetpoint) {
+                if (statusEl) {
+                    statusEl.innerText = 'Подгрев (Подмес)';
+                    statusEl.className = 'text-[10px] font-bold text-amber-400 block truncate max-w-[120px]';
+                }
+                if (cardInletFact) cardInletFact.className = 'glass-card p-3.5 sm:p-4 rounded-2xl flex items-center justify-between border-amber-500/40';
+                if (iconInletFact) iconInletFact.className = 'w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-amber-950 border border-amber-500/40 text-amber-400 flex items-center justify-center text-base sm:text-lg shrink-0';
+            } else {
+                if (statusEl) {
+                    statusEl.innerText = 'Норма (Цель)';
+                    statusEl.className = 'text-[10px] font-bold text-emerald-400 block truncate max-w-[120px]';
+                }
+                if (cardInletFact) cardInletFact.className = 'glass-card p-3.5 sm:p-4 rounded-2xl flex items-center justify-between border-emerald-500/40';
+                if (iconInletFact) iconInletFact.className = 'w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-emerald-950 border border-emerald-500/40 text-emerald-400 flex items-center justify-center text-base sm:text-lg shrink-0';
+            }
+
+            // Controls mode visual update
+            const btnAuto = document.getElementById('btnModeAuto');
+            const btnManual = document.getElementById('btnModeManual');
+            const manualBox = document.getElementById('manualSliderBox');
+            const lblMode = document.getElementById('lblValveMode');
+            const dispModeBadge = document.getElementById('dispValveModeBadge');
+
+            if (valveControlMode === 'auto') {
+                btnAuto.className = 'py-2.5 px-3 text-xs font-bold rounded-xl bg-amber-600 text-white transition shadow cursor-pointer flex items-center justify-center gap-1.5';
+                btnManual.className = 'py-2.5 px-3 text-xs font-bold rounded-xl bg-slate-800 text-slate-400 hover:bg-slate-700 transition cursor-pointer flex items-center justify-center gap-1.5';
+                manualBox.classList.add('opacity-50', 'pointer-events-none');
+                lblMode.innerText = 'АВТОМАТИЧЕСКИЙ (ПИД)';
+                dispModeBadge.innerText = 'Автомат (ПИД)';
+            } else {
+                btnAuto.className = 'py-2.5 px-3 text-xs font-bold rounded-xl bg-slate-800 text-slate-400 hover:bg-slate-700 transition cursor-pointer flex items-center justify-center gap-1.5';
+                btnManual.className = 'py-2.5 px-3 text-xs font-bold rounded-xl bg-amber-600 text-white transition shadow cursor-pointer flex items-center justify-center gap-1.5';
+                manualBox.classList.remove('opacity-50', 'pointer-events-none');
+                lblMode.innerText = 'РУЧНОЙ';
+                dispModeBadge.innerText = 'Ручной режим';
+            }
+        }
+
+        // Actions & Event Handlers
+        function onInletSetpointChange(val) {
+            inletSetpoint = parseFloat(val);
+            updateUI();
+            publishTopic('boiler/inlet_set', inletSetpoint);
+        }
+
+        function onManualPosChange(val) {
+            valvePosition = parseInt(val);
+            updateUI();
+            publishTopic('boiler/valve_pos', valvePosition);
+        }
+
+        function applyPresetPos(pos) {
+            setValveControlMode('manual');
+            valvePosition = pos;
+            document.getElementById('sliderManualPos').value = pos;
+            updateUI();
+            publishTopic('boiler/valve_pos', valvePosition);
+        }
+
+        function setValveControlMode(mode) {
+            valveControlMode = mode;
+            updateUI();
+            publishTopic('boiler/valve_mode', mode);
+        }
+
+        function publishTopic(subTopic, val) {
+            if (!isMqttConnected || !mqttClient || isUpdatingFromMqtt) return;
+            const fullTopic = `${mqttSettings.prefix}/${subTopic}/set`;
+            const stateTopic = `${mqttSettings.prefix}/${subTopic}/state`;
+
+            mqttClient.publish(fullTopic, String(val), { retain: true });
+            mqttClient.publish(stateTopic, String(val), { retain: true });
+            logEvent(`Отправка [${fullTopic}]: ${val}`, 'send');
+        }
+
+        // Modal Logic
+        function openMqttModal() {
+            document.getElementById('cfgModalHost').value = mqttSettings.host;
+            document.getElementById('cfgModalPort').value = mqttSettings.port;
+            document.getElementById('cfgModalPrefix').value = mqttSettings.prefix;
+            document.getElementById('cfgModalUser').value = mqttSettings.user;
+            document.getElementById('cfgModalPassword').value = mqttSettings.password;
+
+            document.getElementById('mqttModal').classList.remove('hidden');
+        }
+
+        function closeMqttModal() {
+            document.getElementById('mqttModal').classList.add('hidden');
+        }
+
+        function saveAndReconnectMqtt() {
+            mqttSettings.host = document.getElementById('cfgModalHost').value.trim();
+            mqttSettings.port = parseInt(document.getElementById('cfgModalPort').value.trim());
+            mqttSettings.prefix = document.getElementById('cfgModalPrefix').value.trim();
+            mqttSettings.user = document.getElementById('cfgModalUser').value.trim();
+            mqttSettings.password = document.getElementById('cfgModalPassword').value.trim();
+
+            saveMqttSettingsToStorage();
+            closeMqttModal();
+            connectMqtt();
+        }
+
+        // MQTT Setup
+        function connectMqtt() {
+            loadMqttSettings();
+
+            if (mqttClient) {
+                mqttClient.end(true);
+            }
+
+            const wsUrl = `wss://${mqttSettings.host}:${mqttSettings.port}/mqtt`;
+            logEvent(`Подключение к ${wsUrl}...`, 'info');
+
+            const options = {
+                clientId: 'mixing_valve_page_' + Math.random().toString(16).substr(2, 8),
+                username: mqttSettings.user,
+                password: mqttSettings.password,
+                clean: true,
+                reconnectPeriod: 4000
+            };
+
+            try {
+                mqttClient = mqtt.connect(wsUrl, options);
+
+                mqttClient.on('connect', () => {
+                    isMqttConnected = true;
+                    updateMqttBadge(true);
+                    logEvent('Успешное подключение к MQTT брокеру', 'success');
+
+                    const topicPattern = `${mqttSettings.prefix}/#`;
+                    mqttClient.subscribe(topicPattern);
+                });
+
+                mqttClient.on('message', (topic, message) => {
+                    handleIncomingMessage(topic, message.toString());
+                });
+
+                mqttClient.on('error', (err) => {
+                    isMqttConnected = false;
+                    updateMqttBadge(false);
+                    logEvent(`Ошибка MQTT: ${err.message}`, 'error');
+                });
+
+                mqttClient.on('close', () => {
+                    isMqttConnected = false;
+                    updateMqttBadge(false);
+                });
+
+            } catch(e) {
+                logEvent(`Ошибка связи: ${e.message}`, 'error');
+            }
+        }
+
+        function handleIncomingMessage(fullTopic, msgStr) {
+            const prefix = mqttSettings.prefix + "/";
+            if (!fullTopic.startsWith(prefix)) return;
+
+            let subTopic = fullTopic.substring(prefix.length).replace(/\/(set|state)$/, "");
+
+            isUpdatingFromMqtt = true;
+
+            if (subTopic === "boiler/temp") tempBoiler = parseFloat(msgStr);
+            else if (subTopic === "buffer/t4") tempT4 = parseFloat(msgStr);
+            else if (subTopic === "boiler/inlet_temp") tempInletFact = parseFloat(msgStr);
+            else if (subTopic === "boiler/inlet_set") {
+                inletSetpoint = parseFloat(msgStr);
+                document.getElementById('sliderInletSet').value = inletSetpoint;
+            }
+            else if (subTopic === "boiler/valve_pos") {
+                valvePosition = parseInt(msgStr);
+                document.getElementById('sliderManualPos').value = valvePosition;
+            }
+            else if (subTopic === "boiler/valve_mode") valveControlMode = msgStr;
+
+            isUpdatingFromMqtt = false;
+            updateUI();
+            logEvent(`Принято [${subTopic}]: ${msgStr}`, 'recv');
+        }
+
+        function updateMqttBadge(connected) {
+            const badge = document.getElementById('mqttStatusBadge');
+            const dot = document.getElementById('mqttDot');
+            const text = document.getElementById('mqttStatusText');
+
+            if (connected) {
+                badge.className = 'px-3 py-1.5 rounded-xl border border-emerald-500/40 bg-emerald-950/30 text-emerald-400 text-xs font-bold flex items-center gap-2 cursor-pointer';
+                dot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse';
+                text.innerText = 'MQTT: Подключено';
+            } else {
+                badge.className = 'px-3 py-1.5 rounded-xl border border-rose-500/40 bg-rose-950/30 text-rose-400 text-xs font-bold flex items-center gap-2 cursor-pointer';
+                dot.className = 'w-2.5 h-2.5 rounded-full bg-rose-500';
+                text.innerText = 'MQTT: Отключено';
+            }
+        }
+
+        function logEvent(msg, type = 'info') {
+            const consoleEl = document.getElementById('valveLogConsole');
+            if (!consoleEl) return;
+
+            const time = new Date().toLocaleTimeString();
+            let color = 'text-slate-300';
+            if (type === 'success') color = 'text-emerald-400 font-bold';
+            if (type === 'error') color = 'text-rose-400 font-bold';
+            if (type === 'send') color = 'text-amber-300';
+            if (type === 'recv') color = 'text-sky-300';
+
+            const div = document.createElement('div');
+            div.className = color;
+            div.innerText = `[${time}] ${msg}`;
+
+            consoleEl.appendChild(div);
+            consoleEl.scrollTop = consoleEl.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('valveLogConsole').innerHTML = '';
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            updateUI();
+            connectMqtt();
+        });
+    </script>
+</body>
+</html>
