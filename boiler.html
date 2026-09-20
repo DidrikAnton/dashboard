@@ -1,0 +1,1105 @@
+<!DOCTYPE html>
+<html lang="ru" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Твердотопливный Котёл — Визуализация в Разрезе и Управление</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://unpkg.com/mqtt@4.3.7/dist/mqtt.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #060911; color: #f1f5f9; }
+        
+        .glass-card { 
+            background: rgba(26, 36, 56, 0.85); 
+            backdrop-filter: blur(12px); 
+            border: 1px solid rgba(255, 255, 255, 0.08); 
+        }
+
+        /* Boiler Unit Graphics */
+        .boiler-unit-card {
+            background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+            border: 3px solid #0284c7;
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.7);
+        }
+
+        .fire-box {
+            background: #050505;
+            box-shadow: inset 0 0 20px rgba(239, 68, 68, 0.6);
+        }
+
+        .fuel-chamber {
+            background: rgba(15, 23, 42, 0.95);
+            box-shadow: inset 0 0 15px rgba(245, 158, 11, 0.2);
+        }
+
+        .ash-pit-box {
+            background: #090d16;
+            box-shadow: inset 0 0 12px rgba(100, 116, 139, 0.4);
+        }
+
+        .flame-active {
+            animation: flameFlicker 0.8s ease-in-out infinite alternate;
+        }
+
+        @keyframes flameFlicker {
+            0% { transform: scale(0.92); opacity: 0.85; filter: drop-shadow(0 0 8px #ef4444); }
+            50% { transform: scale(1.06); opacity: 1; filter: drop-shadow(0 0 18px #f97316); }
+            100% { transform: scale(0.96); opacity: 0.9; filter: drop-shadow(0 0 12px #eab308); }
+        }
+
+        .ember-glow {
+            animation: emberPulse 1.4s ease-in-out infinite alternate;
+        }
+
+        @keyframes emberPulse {
+            0% { filter: drop-shadow(0 0 2px #ef4444); opacity: 0.6; }
+            100% { filter: drop-shadow(0 0 8px #f97316); opacity: 1; }
+        }
+
+        .alarm-pulse { 
+            animation: alarmPulse 1s ease-in-out infinite; 
+        }
+
+        @keyframes alarmPulse {
+            0%, 100% { background-color: rgba(220, 38, 38, 0.2); border-color: rgba(239, 68, 68, 0.8); }
+            50% { background-color: rgba(220, 38, 38, 0.5); border-color: rgba(239, 68, 68, 1); }
+        }
+
+        .pump-spinning {
+            animation: spin 1.5s linear infinite;
+            transform-origin: center;
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        .pipe-base { transition: stroke 0.6s ease-in-out; }
+        .pipe-path {
+            stroke-dasharray: 8 6;
+            animation: flowDash 1.0s linear infinite;
+        }
+
+        @keyframes flowDash {
+            to { stroke-dashoffset: -28; }
+        }
+
+        .air-flow-path {
+            stroke-dasharray: 4 4;
+            animation: airFlow 1.2s linear infinite;
+        }
+
+        @keyframes airFlow {
+            to { stroke-dashoffset: -16; }
+        }
+
+        /* Smoke effect */
+        @keyframes smokeRise {
+            0% { transform: translateY(0) scale(0.8); opacity: 0.7; }
+            50% { transform: translateY(-12px) scale(1.1); opacity: 0.4; }
+            100% { transform: translateY(-24px) scale(1.4); opacity: 0; }
+        }
+
+        .smoke-puff-1 { animation: smokeRise 2s ease-out infinite; }
+        .smoke-puff-2 { animation: smokeRise 2s ease-out infinite 0.7s; }
+        .smoke-puff-3 { animation: smokeRise 2s ease-out infinite 1.4s; }
+
+        /* Custom Notification Toast */
+        #toastContainer {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+    </style>
+</head>
+<body class="min-h-screen pb-12 pt-4">
+
+    <!-- Toast Notification Overlay -->
+    <div id="toastContainer"></div>
+
+    <!-- HEADER -->
+    <header class="max-w-[1450px] mx-auto px-4 mb-4">
+        <div class="glass-card p-4 rounded-2xl flex flex-wrap items-center justify-between gap-4 shadow-xl">
+            <div class="flex items-center gap-4">
+                <a href="index.html" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl border border-slate-700 text-xs font-bold transition flex items-center gap-2">
+                    <i class="fa-solid fa-arrow-left"></i> Дашборд
+                </a>
+                <div class="flex items-center gap-3">
+                    <div id="flameIconContainer" class="w-10 h-10 rounded-xl bg-orange-600/30 border border-orange-500/50 flex items-center justify-center text-orange-400 text-xl font-bold">
+                        <i id="flameIcon" class="fa-solid fa-fire text-lg"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-base font-extrabold text-white flex items-center gap-2">
+                            Твердотопливный Котёл
+                            <span class="bg-amber-950/80 text-amber-300 border border-amber-500/50 text-[10px] px-2 py-0.5 rounded-full font-normal">
+                                Разрез: Топка, Колосники, Зольник, Дозагрузка
+                            </span>
+                        </h1>
+                        <p class="text-[11px] text-slate-400">Мониторинг процесса сгорания, защита от конденсата и управление тягой</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-3">
+                <button onclick="openConfigModal()" class="px-3 py-1.5 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-2 transition cursor-pointer">
+                    <i class="fa-solid fa-gear text-sky-400"></i> Конфиг / JSON
+                </button>
+                <div id="mqttBadge" class="px-3 py-1.5 rounded-xl border border-amber-500/40 bg-amber-950/30 text-amber-400 text-xs font-bold flex items-center gap-2">
+                    <span id="mqttDot" class="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span>
+                    <span id="mqttStatusText">MQTT: Подключение...</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- CRITICAL ALARM BANNER -->
+    <div id="criticalAlarmBanner" class="max-w-[1450px] mx-auto px-4 mb-4 hidden">
+        <div class="alarm-pulse p-4 rounded-2xl border text-white flex items-center justify-between gap-4 shadow-2xl">
+            <div class="flex items-center gap-3">
+                <i class="fa-solid fa-triangle-exclamation text-red-400 text-2xl animate-bounce"></i>
+                <div>
+                    <h3 class="font-bold text-sm uppercase tracking-wide text-red-200">Критический Аларм Системы!</h3>
+                    <p id="criticalAlarmText" class="text-xs text-red-100">Превышение порога безопасности котла</p>
+                </div>
+            </div>
+            <button onclick="dismissAlarm()" class="px-3 py-1 bg-red-900/80 hover:bg-red-800 border border-red-500 rounded-lg text-xs font-bold cursor-pointer">Закрыть</button>
+        </div>
+    </div>
+
+    <main class="max-w-[1450px] mx-auto px-4 space-y-6">
+
+        <!-- INTERACTIVE VISUALIZATION SCHEMATIC CARD -->
+        <div class="glass-card p-4 sm:p-6 rounded-3xl shadow-2xl relative overflow-hidden">
+            <div class="flex flex-wrap justify-between items-center gap-3 border-b border-slate-800 pb-3 mb-6">
+                <h2 class="text-xs sm:text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                    <i class="fa-solid fa-fire-burner text-amber-400"></i> Схема Твердотопливного Котла и Датчиков
+                </h2>
+                <div class="text-[10px] text-slate-400 bg-slate-900 px-3 py-1 rounded-xl border border-slate-800">
+                    Режим: Фокус на Теплообмен и Дымогазы
+                </div>
+            </div>
+
+            <!-- CLEAN RESPONSIVE GRID LAYOUT (NO OVERLAPS) -->
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
+                
+                <!-- VISUAL BOILER GRAPHIC (LG: 7 COLS) -->
+                <div class="lg:col-span-7 flex flex-col items-center relative py-2">
+                    
+                    <!-- MAIN BOILER BODY CONTAINER -->
+                    <div class="relative w-full max-w-[460px]">
+                        
+                        <!-- CHIMNEY PIPE (TOP RIGHT EXTENSION) -->
+                        <div class="absolute -top-12 right-12 w-20 h-16 bg-slate-800 border-x-2 border-t-2 border-slate-600 rounded-t-lg flex flex-col items-center justify-start pt-1 z-0 shadow-lg">
+                            <span class="text-[9px] text-orange-400 font-bold uppercase tracking-tighter">Дымоход</span>
+                            <!-- Dynamic Smoke Puffs -->
+                            <div id="visSmokeContainer" class="relative -top-5 flex justify-center items-center gap-1 opacity-90">
+                                <span class="smoke-puff-1 w-2.5 h-2.5 bg-slate-400/60 rounded-full blur-[1px]"></span>
+                                <span class="smoke-puff-2 w-3.5 h-3.5 bg-slate-400/50 rounded-full blur-[1px] -ml-2"></span>
+                                <span class="smoke-puff-3 w-3 h-3 bg-slate-300/60 rounded-full blur-[1px] -ml-1"></span>
+                            </div>
+                        </div>
+
+                        <!-- BOILER HOUSING CUTAWAY -->
+                        <div class="boiler-unit-card rounded-3xl p-4 sm:p-5 relative z-10 border-4 border-sky-500 shadow-2xl space-y-4">
+                            
+                            <!-- WATER JACKET OUTER GLOW OVERLAY -->
+                            <div id="visWaterJacket" class="absolute inset-0 rounded-3xl bg-gradient-to-b from-red-600/10 via-amber-600/5 to-emerald-600/10 pointer-events-none transition-all duration-700"></div>
+
+                            <!-- HEADER LABEL & TOP TEMP (ПОДАЧА) -->
+                            <div class="flex justify-between items-center bg-slate-900/95 p-3 rounded-2xl border border-sky-500/40 shadow-md relative z-10">
+                                <div class="flex items-center gap-2.5">
+                                    <div class="w-8 h-8 rounded-xl bg-sky-950 border border-sky-500/50 flex items-center justify-center text-sky-400 font-bold text-sm">
+                                        <i class="fa-solid fa-temperature-arrow-up"></i>
+                                    </div>
+                                    <div>
+                                        <span class="text-[10px] text-sky-400 font-bold uppercase tracking-wider block">Подача (T котла)</span>
+                                        <span class="text-[9px] text-slate-400">Водяная рубашка / Теплообменник</span>
+                                    </div>
+                                </div>
+                                <div class="text-right">
+                                    <span id="visSupplyBadge" class="text-xl font-mono font-extrabold text-red-500">20.0 °C</span>
+                                </div>
+                            </div>
+
+                            <!-- SECTION: COMBUSTION FIREBOX (ТОПОЧНАЯ КАМЕРА С ОГНЕМ И ДЫМОГАЗАМИ) -->
+                            <div class="fire-box h-44 rounded-2xl border-2 border-slate-700 flex flex-col items-center justify-between p-4 relative overflow-hidden z-10">
+                                
+                                <!-- FLUE GAS & CO SENSORS -->
+                                <div class="w-full flex justify-between items-center z-10 gap-2">
+                                    <div class="bg-slate-900/90 px-3 py-1.5 rounded-xl border border-slate-700 flex items-center gap-2 text-xs">
+                                        <i class="fa-solid fa-wind text-orange-400"></i>
+                                        <span class="text-slate-300">Дымогазы:</span>
+                                        <strong id="visFlueBadge" class="font-mono font-bold text-orange-400">20.0 °C</strong>
+                                    </div>
+
+                                    <div id="visCoBadge" class="bg-emerald-950/90 px-3 py-1.5 rounded-xl border border-emerald-700/60 flex items-center gap-2 text-xs font-bold text-emerald-400">
+                                        <i class="fa-solid fa-mask-ventilator"></i>
+                                        <span id="visCoText">CO: 0 PPM</span>
+                                    </div>
+                                </div>
+
+                                <!-- FLAME GRAPHIC & STATUS -->
+                                <div id="visFlameContainer" class="flame-active flex items-end gap-1.5 z-10 my-2 opacity-30">
+                                    <i class="fa-solid fa-fire text-3xl text-amber-500"></i>
+                                    <i class="fa-solid fa-fire text-6xl text-red-500 -mx-1"></i>
+                                    <i class="fa-solid fa-fire text-5xl text-yellow-400"></i>
+                                    <i class="fa-solid fa-fire text-3xl text-orange-500"></i>
+                                </div>
+
+                                <!-- FLAME STATUS BADGE -->
+                                <div class="w-full flex justify-center items-center z-10">
+                                    <div id="visFlameStatusBadge" class="bg-black/80 px-3 py-1.5 rounded-xl text-[10px] font-bold text-slate-400 border border-slate-700 flex items-center gap-2">
+                                        <span class="w-2.5 h-2.5 rounded-full bg-slate-500"></span>
+                                        <span id="visFlameStatusText">ОЖИДАНИЕ РОЗЖИГА</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- BOTTOM INLET & RETURN BADGE (ОБРАТКА) -->
+                            <div class="flex justify-between items-center bg-slate-900/95 p-3 rounded-2xl border border-slate-800 shadow-md relative z-10">
+                                <div class="flex items-center gap-2.5">
+                                    <div class="w-8 h-8 rounded-xl bg-emerald-950 border border-emerald-500/50 flex items-center justify-center text-emerald-400 font-bold text-sm">
+                                        <i class="fa-solid fa-temperature-arrow-down"></i>
+                                    </div>
+                                    <div>
+                                        <span class="text-[10px] text-emerald-400 font-bold uppercase tracking-wider block">Обратка (T вх)</span>
+                                        <span id="visReturnBadge" class="text-base font-mono font-bold text-emerald-400">20.0 °C</span>
+                                    </div>
+                                </div>
+                                <div class="text-right">
+                                    <span class="text-[9px] text-slate-400 block">Перепад (ΔT)</span>
+                                    <span id="visDeltaBadge" class="text-base font-mono font-bold text-cyan-400">0.0 °C</span>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- EXTERNAL TELEMETRY & ACTUATORS STACK (LG: 5 COLS) -->
+                <div class="lg:col-span-5 space-y-4">
+                    
+                    <!-- PUMP & PRESSURE CONTROL CARD -->
+                    <div class="p-4 bg-slate-900/90 rounded-2xl border border-slate-800 space-y-4">
+                        <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center justify-between border-b border-slate-800 pb-2">
+                            <span>Исполнительные узлы и контуры</span>
+                            <span id="visSummaryModeBadge" class="text-[10px] text-amber-400 bg-amber-950/80 px-2.5 py-0.5 rounded border border-amber-800 font-mono">АВТО</span>
+                        </h3>
+
+                        <div class="grid grid-cols-2 gap-3">
+                            <!-- PUMP STATUS NODE -->
+                            <div class="p-3 bg-slate-950 rounded-2xl border border-slate-800 flex flex-col items-center justify-center text-center">
+                                <span class="text-[10px] text-slate-400 mb-1">Насос котла</span>
+                                <div class="flex items-center gap-2 my-1">
+                                    <div id="visPumpIconBox" class="w-8 h-8 bg-slate-900 border-2 border-amber-500 rounded-full flex items-center justify-center shadow">
+                                        <i id="visPumpIcon" class="fa-solid fa-circle-notch text-amber-400 text-xs"></i>
+                                    </div>
+                                    <span id="visPumpStatusText" class="text-xs font-bold text-slate-400">ВЫКЛ</span>
+                                </div>
+                            </div>
+
+                            <!-- PRESSURE GAUGE NODE -->
+                            <div class="p-3 bg-slate-950 rounded-2xl border border-slate-800 flex flex-col items-center justify-center text-center">
+                                <span class="text-[10px] text-slate-400 mb-1">Давление контура</span>
+                                <div class="flex items-center gap-1.5 my-1 text-sky-400">
+                                    <i class="fa-solid fa-gauge-high text-sm"></i>
+                                    <span id="visPressureText" class="text-sm font-mono font-extrabold text-sky-300">1.8 бар</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- SYSTEM CONNECTIONS INFO -->
+                        <div class="grid grid-cols-2 gap-2 text-[11px]">
+                            <div class="p-2.5 bg-slate-950 rounded-xl border border-red-500/30 flex flex-col">
+                                <span class="text-red-400 font-bold">ПОДАЧА В СИСТЕМУ</span>
+                                <span class="text-slate-400 text-[10px]">в Буфер / Коллектор</span>
+                            </div>
+                            <div class="p-2.5 bg-slate-950 rounded-xl border border-emerald-500/30 flex flex-col">
+                                <span class="text-emerald-400 font-bold">ОБРАТКА СИСТЕМЫ</span>
+                                <span class="text-slate-400 text-[10px]">из Трехходового</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- QUICK STATS & STATUS SUMMARY -->
+                    <div class="p-4 bg-slate-900/90 rounded-2xl border border-slate-800 space-y-3">
+                        <div class="grid grid-cols-2 gap-3">
+                            <div class="p-3 bg-slate-950 rounded-xl border border-slate-800">
+                                <span class="text-[10px] text-slate-400 block">Расчётный КПД:</span>
+                                <span id="visSummaryEff" class="text-xl font-mono font-extrabold text-purple-400">0%</span>
+                            </div>
+                            <div class="p-3 bg-slate-950 rounded-xl border border-slate-800">
+                                <span class="text-[10px] text-slate-400 block">Уставка обратки:</span>
+                                <span id="visSummaryInletSet" class="text-xl font-mono font-extrabold text-emerald-400">60.0 °C</span>
+                            </div>
+                        </div>
+
+                        <div class="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1.5">
+                            <div class="flex justify-between items-center text-xs">
+                                <span class="text-slate-400">Ресурс до чистки дымохода:</span>
+                                <span id="visSummaryChimney" class="font-mono font-bold text-amber-400">100%</span>
+                            </div>
+                            <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                                <div id="visSummaryChimneyBar" class="bg-amber-500 h-full w-[100%] transition-all duration-500"></div>
+                            </div>
+                        </div>
+
+                        <div class="p-3 bg-slate-950 rounded-xl border border-slate-800 flex justify-between items-center">
+                            <span class="text-xs text-slate-400">Наработок (Моточасы):</span>
+                            <span id="visSummaryHours" class="text-sm font-mono font-bold text-purple-300">0 ч. 0 мин.</span>
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>
+        </div>
+
+        <!-- TELEMETRY & CONTROLS GRID -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+            <!-- TELEMETRY CARD -->
+            <div class="glass-card p-6 rounded-3xl space-y-4">
+                <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+                    <h2 class="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                        <i class="fa-solid fa-microchip text-sky-400"></i> Телеметрия Датчиков
+                    </h2>
+                    <span class="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">Sub: /state</span>
+                </div>
+
+                <div class="space-y-2.5">
+                    <div class="p-3 bg-slate-900/90 rounded-2xl border border-slate-800 flex justify-between items-center">
+                        <div class="flex items-center gap-2">
+                            <i class="fa-solid fa-temperature-arrow-up text-red-500"></i>
+                            <span class="text-xs text-slate-300 font-semibold">Температура подачи (T котла):</span>
+                        </div>
+                        <span id="telemetrySupply" class="text-lg font-mono font-extrabold text-red-400">-- °C</span>
+                    </div>
+
+                    <div class="p-3 bg-slate-900/90 rounded-2xl border border-slate-800 flex justify-between items-center">
+                        <div class="flex items-center gap-2">
+                            <i class="fa-solid fa-temperature-arrow-down text-emerald-400"></i>
+                            <span class="text-xs text-slate-300 font-semibold">Температура обратки (T вх):</span>
+                        </div>
+                        <span id="telemetryReturn" class="text-lg font-mono font-extrabold text-emerald-400">-- °C</span>
+                    </div>
+
+                    <div class="p-3 bg-slate-900/90 rounded-2xl border border-slate-800 flex justify-between items-center">
+                        <div class="flex items-center gap-2">
+                            <i class="fa-solid fa-right-left text-cyan-400"></i>
+                            <span class="text-xs text-slate-300 font-semibold">Перепад (ΔT):</span>
+                        </div>
+                        <span id="telemetryDelta" class="text-base font-mono font-bold text-cyan-400">-- °C</span>
+                    </div>
+
+                    <div class="p-3 bg-slate-900/90 rounded-2xl border border-slate-800 flex justify-between items-center">
+                        <div class="flex items-center gap-2">
+                            <i class="fa-solid fa-wind text-orange-400"></i>
+                            <span class="text-xs text-slate-300 font-semibold">Температура дымогазов:</span>
+                        </div>
+                        <span id="telemetryFlue" class="text-lg font-mono font-extrabold text-orange-400">-- °C</span>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-2">
+                        <div class="p-2.5 bg-slate-900/90 rounded-2xl border border-slate-800 flex justify-between items-center">
+                            <span class="text-[11px] text-slate-400">CO:</span>
+                            <span id="telemetryCO" class="text-xs font-mono font-bold text-emerald-400">0 PPM</span>
+                        </div>
+                        <div class="p-2.5 bg-slate-900/90 rounded-2xl border border-slate-800 flex justify-between items-center">
+                            <span class="text-[11px] text-slate-400">Давление:</span>
+                            <span id="telemetryPressure" class="text-xs font-mono font-bold text-sky-400">1.8 бар</span>
+                        </div>
+                    </div>
+
+                    <div class="p-3 bg-slate-900/90 rounded-2xl border border-slate-800 flex justify-between items-center">
+                        <div class="flex items-center gap-2">
+                            <i class="fa-solid fa-fire-flame-curved text-amber-400"></i>
+                            <span class="text-xs text-slate-300 font-semibold">Состояние горения:</span>
+                        </div>
+                        <span id="telemetryFlameState" class="text-xs font-bold text-slate-400 bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-700">ОЖИДАНИЕ</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PUMP MODE & SETPOINTS CONTROL -->
+            <div class="glass-card p-6 rounded-3xl space-y-4">
+                <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+                    <h2 class="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                        <i class="fa-solid fa-sliders text-amber-400"></i> Управление Котловым Насосом
+                    </h2>
+                    <span id="pumpStatusBadge" class="text-[10px] font-bold text-slate-400 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">НАСОС: ВЫКЛ</span>
+                </div>
+
+                <div class="space-y-4">
+                    <div>
+                        <div class="flex justify-between items-center mb-2">
+                            <label class="text-xs text-slate-400 font-semibold">Режим работы насоса:</label>
+                            <span id="watchdogBadge" class="hidden text-[10px] font-bold text-amber-400 bg-amber-950/80 px-2 py-0.5 rounded border border-amber-600 animate-pulse">
+                                Watchdog: <span id="watchdogSec">20</span>с
+                            </span>
+                        </div>
+                        <div class="grid grid-cols-3 gap-2">
+                            <button onclick="setPumpMode('AUTO')" id="btnPumpAuto" class="py-2.5 text-xs font-bold rounded-xl border border-blue-500 bg-blue-600 text-white transition cursor-pointer">АВТО</button>
+                            <button onclick="setPumpMode('ON')" id="btnPumpOn" class="py-2.5 text-xs font-bold rounded-xl border border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 transition cursor-pointer">ВКЛ (Руч.)</button>
+                            <button onclick="setPumpMode('OFF')" id="btnPumpOff" class="py-2.5 text-xs font-bold rounded-xl border border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 transition cursor-pointer">ВЫКЛ (Руч.)</button>
+                        </div>
+                        <div id="watchdogResetBox" class="hidden mt-2 flex justify-between items-center p-2 bg-amber-950/30 rounded-xl border border-amber-800/50">
+                            <span class="text-[11px] text-amber-300">Сброс в АВТО через <b id="watchdogTimeText">20</b> с</span>
+                            <button onclick="extendWatchdog()" class="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-bold rounded-lg transition cursor-pointer">Продлить (+20с)</button>
+                        </div>
+                        <p class="text-[10px] text-slate-400 mt-2"><b>АВТО:</b> Активация при T котла > 55°C или T дыма > 100°C. В ручном режиме действует 20-с Watchdog.</p>
+                    </div>
+
+                    <!-- SETPOINT INLET (HARDWARE MIN 60°C BOUND) -->
+                    <div class="p-3 bg-slate-900/90 rounded-2xl border border-slate-800 space-y-2">
+                        <div class="flex justify-between items-center text-xs">
+                            <span class="text-slate-300 font-semibold flex items-center gap-1.5">
+                                <i class="fa-solid fa-shield-halved text-emerald-400"></i> Уставка обратки (boiler/inlet_set):
+                            </span>
+                            <span id="dispInletSet" class="font-mono font-bold text-emerald-400">60.0 °C</span>
+                        </div>
+                        <input type="range" id="sliderInletSet" min="60" max="75" value="60" step="0.5" onchange="sendInletSet(this.value)" oninput="updateInletSetUI(this.value)" class="w-full accent-emerald-500 cursor-pointer">
+                        <div class="flex justify-between text-[9px] text-slate-500">
+                            <span>60.0°C (Мин. Защита)</span>
+                            <span>67.5°C</span>
+                            <span>75.0°C</span>
+                        </div>
+                    </div>
+
+                    <!-- SETPOINT FLUE -->
+                    <div class="p-3 bg-slate-900/90 rounded-2xl border border-slate-800 space-y-2">
+                        <div class="flex justify-between items-center text-xs">
+                            <span class="text-slate-300 font-semibold flex items-center gap-1.5">
+                                <i class="fa-solid fa-fire text-orange-400"></i> Порог горения (boiler/flue_set):
+                            </span>
+                            <span id="dispFlueSet" class="font-mono font-bold text-orange-400">100 °C</span>
+                        </div>
+                        <input type="range" id="sliderFlueSet" min="50" max="180" value="100" step="1" onchange="sendFlueSet(this.value)" oninput="updateFlueSetUI(this.value)" class="w-full accent-orange-500 cursor-pointer">
+                    </div>
+                </div>
+            </div>
+
+            <!-- SERVICE, EFFICIENCY DIAGNOSTICS & BURN COUNTER -->
+            <div class="glass-card p-6 rounded-3xl space-y-4">
+                <h2 class="text-sm font-bold text-white uppercase tracking-wider border-b border-slate-800 pb-3 flex items-center gap-2">
+                    <i class="fa-solid fa-chart-pie text-purple-400"></i> Диагностика КПД и Сервис
+                </h2>
+
+                <div class="space-y-3">
+                    <div class="p-3 bg-slate-900/90 rounded-2xl border border-slate-800">
+                        <div class="flex justify-between items-center mb-1">
+                            <span class="text-[11px] text-slate-400 font-semibold">Расчётный КПД сгорания:</span>
+                            <span id="boilerEfficiency" class="text-sm font-mono font-extrabold text-purple-300">0 %</span>
+                        </div>
+                        <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                            <div id="efficiencyBar" class="bg-gradient-to-r from-red-500 via-amber-500 to-emerald-500 h-full w-[0%] transition-all duration-500"></div>
+                        </div>
+                        <div id="hydraulicDiagText" class="text-[10px] text-slate-400 mt-2 flex items-center gap-1">
+                            <i class="fa-solid fa-circle-info text-sky-400"></i> Гидравлика в норме
+                        </div>
+                    </div>
+
+                    <div class="p-3 bg-slate-900/90 rounded-2xl border border-slate-800">
+                        <div class="text-[11px] text-slate-400">Суммарный наработок (Моточасы):</div>
+                        <div id="burnHoursDisplay" class="text-xl font-mono font-extrabold text-purple-400 mt-0.5">0 ч. 0 мин.</div>
+                    </div>
+
+                    <div class="p-3 bg-slate-900/90 rounded-2xl border border-slate-800">
+                        <div class="flex justify-between items-center">
+                            <div class="text-[11px] text-slate-400">Ресурс до чистки дымохода:</div>
+                            <span id="chimneyPercent" class="text-xs font-mono font-bold text-amber-400">100%</span>
+                        </div>
+                        <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden mt-2">
+                            <div id="chimneyBar" class="bg-amber-500 h-full w-[100%] transition-all duration-500"></div>
+                        </div>
+                    </div>
+
+                    <button onclick="resetChimneyTimer()" class="w-full py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-pointer">
+                        <i class="fa-solid fa-broom text-amber-400"></i> Сбросить таймер чистки дымохода
+                    </button>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- CHART SECTION -->
+        <div class="glass-card p-6 rounded-3xl space-y-4 shadow-2xl">
+            <div class="flex justify-between items-center">
+                <h2 class="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                    <i class="fa-solid fa-chart-line text-blue-400"></i> Динамика Нагрева Котла, Дымогазов и КПД
+                </h2>
+                <span class="text-[10px] text-slate-400 font-mono">Обновление в реальном времени</span>
+            </div>
+            <div class="h-64 sm:h-72 w-full">
+                <canvas id="boilerChart"></canvas>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- CONFIG & JSON IMPORT/EXPORT MODAL -->
+    <div id="configModal" class="fixed inset-0 bg-black/80 backdrop-blur-md hidden flex items-center justify-center z-50 p-4">
+        <div class="glass-card max-w-lg w-full p-6 rounded-3xl space-y-5 border border-slate-700 shadow-2xl">
+            <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+                <h3 class="text-base font-extrabold text-white flex items-center gap-2">
+                    <i class="fa-solid fa-sliders text-sky-400"></i> Глобальная Конфигурация и JSON
+                </h3>
+                <button onclick="closeConfigModal()" class="text-slate-400 hover:text-white text-lg cursor-pointer"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+
+            <div class="space-y-3 text-xs">
+                <div>
+                    <label class="text-slate-400 block mb-1 font-semibold">MQTT Брокер (Host):</label>
+                    <input type="text" id="cfgHost" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono">
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="text-slate-400 block mb-1 font-semibold">Порт (WSS):</label>
+                        <input type="number" id="cfgPort" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono">
+                    </div>
+                    <div>
+                        <label class="text-slate-400 block mb-1 font-semibold">Базовый префикс:</label>
+                        <input type="text" id="cfgPrefix" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono">
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="text-slate-400 block mb-1 font-semibold">Логин:</label>
+                        <input type="text" id="cfgUser" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono">
+                    </div>
+                    <div>
+                        <label class="text-slate-400 block mb-1 font-semibold">Пароль:</label>
+                        <input type="password" id="cfgPass" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono">
+                    </div>
+                </div>
+            </div>
+
+            <div class="pt-2 border-t border-slate-800 space-y-2">
+                <button onclick="saveMqttConfig()" class="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl transition cursor-pointer">
+                    Сохранить настройки брокера
+                </button>
+                <div class="grid grid-cols-2 gap-2">
+                    <button onclick="exportConfigJSON()" class="py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer">
+                        <i class="fa-solid fa-download"></i> Экспорт JSON
+                    </button>
+                    <label class="py-2.5 bg-purple-700 hover:bg-purple-600 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer text-center">
+                        <i class="fa-solid fa-upload"></i> Импорт JSON
+                        <input type="file" accept=".json" onchange="importConfigJSON(event)" class="hidden">
+                    </label>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Default Configuration
+        let cfg = { host: "m4.wqtt.ru", port: 6247, prefix: "home/heating", user: "didrik", password: "7777777" };
+        try {
+            const saved = localStorage.getItem('mqtt_heating_config');
+            if (saved) cfg = { ...cfg, ...JSON.parse(saved) };
+        } catch(e) { console.error(e); }
+
+        // Local state variables
+        let pumpMode = 'AUTO';
+        let watchdogTimer = null;
+        let watchdogCount = 20;
+        let boilerChart;
+        let client;
+
+        // Fuel & Ash Pit Simulation state
+        let fuelPercent = 80;
+        let ashPercent = 25;
+
+        // Telemetry values state
+        let telemetryData = {
+            tSupply: 20,
+            tReturn: 20,
+            tFlue: 20,
+            coPpm: 0,
+            pressure: 1.8,
+            burnSeconds: 51300
+        };
+
+        const ctx = document.getElementById('boilerChart').getContext('2d');
+        boilerChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: Array.from({length: 12}, (_, i) => `${i*5} мин`),
+                datasets: [
+                    { label: 'Подача T_котла (°C)', data: [20, 25, 40, 58, 72, 76, 75, 75, 74, 75, 75, 75], borderColor: '#ef4444', backgroundColor: 'rgba(239, 68, 68, 0.08)', fill: true, tension: 0.3 },
+                    { label: 'Обратка T_вх (°C)', data: [20, 22, 30, 48, 58, 60, 60, 60, 59, 60, 60, 60], borderColor: '#10b981', backgroundColor: 'transparent', tension: 0.3 },
+                    { label: 'Дымогазы T_дыма (°C)', data: [20, 40, 95, 160, 180, 165, 150, 148, 152, 150, 150, 150], borderColor: '#f97316', backgroundColor: 'transparent', tension: 0.3 },
+                    { label: 'КПД (%)', data: [0, 10, 45, 78, 85, 84, 82, 82, 81, 82, 82, 82], borderColor: '#a855f7', borderDash: [4, 4], backgroundColor: 'transparent', tension: 0.3 }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { labels: { color: '#94a3b8', font: { family: 'Inter', size: 11 } } } },
+                scales: {
+                    x: { ticks: { color: '#64748b' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                    y: { ticks: { color: '#64748b' }, grid: { color: 'rgba(255,255,255,0.05)' } }
+                }
+            }
+        });
+
+        function initMQTT() {
+            client = mqtt.connect(`wss://${cfg.host}:${cfg.port}/mqtt`, {
+                username: cfg.user,
+                password: cfg.password,
+                clientId: 'boiler_page_' + Math.random().toString(16).substring(2, 10)
+            });
+
+            client.on('connect', () => {
+                document.getElementById('mqttStatusText').innerText = 'MQTT: Подключено';
+                document.getElementById('mqttDot').className = 'w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse';
+                
+                // Subscribe strictly to state topics
+                client.subscribe(`${cfg.prefix}/boiler/#`);
+            });
+
+            client.on('error', (err) => {
+                document.getElementById('mqttStatusText').innerText = 'MQTT: Ошибка';
+                document.getElementById('mqttDot').className = 'w-2.5 h-2.5 rounded-full bg-red-500';
+            });
+
+            client.on('message', (topic, payload) => {
+                const val = payload.toString();
+                handleIncomingMQTT(topic, val);
+            });
+        }
+
+        function handleIncomingMQTT(topic, val) {
+            const subTopic = topic.replace(`${cfg.prefix}/boiler/`, '');
+
+            switch (subTopic) {
+                case 'temp/state':
+                case 'temp':
+                    telemetryData.tSupply = parseFloat(val) || 0;
+                    document.getElementById('telemetrySupply').innerText = telemetryData.tSupply.toFixed(1) + ' °C';
+                    document.getElementById('visSupplyBadge').innerText = telemetryData.tSupply.toFixed(1) + ' °C';
+                    updateDiagnostics();
+                    break;
+
+                case 'return_temp/state':
+                case 'return_temp':
+                    telemetryData.tReturn = parseFloat(val) || 0;
+                    document.getElementById('telemetryReturn').innerText = telemetryData.tReturn.toFixed(1) + ' °C';
+                    document.getElementById('visReturnBadge').innerText = telemetryData.tReturn.toFixed(1) + ' °C';
+                    updateDiagnostics();
+                    break;
+
+                case 'flue_temp/state':
+                case 'flue_temp':
+                    telemetryData.tFlue = parseFloat(val) || 0;
+                    document.getElementById('telemetryFlue').innerText = telemetryData.tFlue.toFixed(1) + ' °C';
+                    document.getElementById('visFlueBadge').innerText = telemetryData.tFlue.toFixed(1) + ' °C';
+                    updateFlameState();
+                    updateDiagnostics();
+                    break;
+
+                case 'co_ppm/state':
+                case 'co_ppm':
+                    telemetryData.coPpm = parseFloat(val) || 0;
+                    document.getElementById('telemetryCO').innerText = telemetryData.coPpm.toFixed(0) + ' PPM';
+                    document.getElementById('visCoText').innerText = 'CO: ' + telemetryData.coPpm.toFixed(0) + ' PPM';
+                    if (telemetryData.coPpm > 30) {
+                        document.getElementById('visCoBadge').className = 'bg-red-950/90 px-3 py-1.5 rounded-xl border border-red-500 text-xs font-bold text-red-300 animate-pulse';
+                    } else {
+                        document.getElementById('visCoBadge').className = 'bg-emerald-950/90 px-3 py-1.5 rounded-xl border border-emerald-700/60 text-xs font-bold text-emerald-400';
+                    }
+                    checkAlarms();
+                    break;
+
+                case 'pressure/state':
+                case 'pressure':
+                    telemetryData.pressure = parseFloat(val) || 0;
+                    document.getElementById('telemetryPressure').innerText = telemetryData.pressure.toFixed(2) + ' бар';
+                    document.getElementById('visPressureText').innerText = telemetryData.pressure.toFixed(1) + ' бар';
+                    checkAlarms();
+                    break;
+
+                case 'inlet_set/state':
+                case 'inlet_set':
+                    const inletVal = Math.max(60.0, parseFloat(val) || 60.0);
+                    document.getElementById('dispInletSet').innerText = inletVal.toFixed(1) + ' °C';
+                    document.getElementById('sliderInletSet').value = inletVal;
+                    document.getElementById('visSummaryInletSet').innerText = inletVal.toFixed(1) + ' °C';
+                    break;
+
+                case 'flue_set/state':
+                case 'flue_set':
+                    const flueVal = parseFloat(val) || 100;
+                    document.getElementById('dispFlueSet').innerText = flueVal.toFixed(0) + ' °C';
+                    document.getElementById('sliderFlueSet').value = flueVal;
+                    break;
+
+                case 'pump_mode/state':
+                case 'pump_mode':
+                    syncPumpModeUI(val);
+                    document.getElementById('visSummaryModeBadge').innerText = val;
+                    break;
+
+                case 'pump_status/state':
+                case 'pump_status':
+                    const pStatus = val.toUpperCase() === 'ON' || val === '1';
+                    const badge = document.getElementById('pumpStatusBadge');
+                    badge.innerText = pStatus ? 'НАСОС: Работает' : 'НАСОС: ВЫКЛ';
+                    badge.className = pStatus 
+                        ? 'text-[10px] font-bold text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-700 animate-pulse'
+                        : 'text-[10px] font-bold text-slate-400 bg-slate-800 px-2 py-0.5 rounded border border-slate-700';
+
+                    const visPumpIcon = document.getElementById('visPumpIcon');
+                    const visPumpText = document.getElementById('visPumpStatusText');
+                    if (pStatus) {
+                        visPumpIcon.className = 'fa-solid fa-circle-notch text-amber-400 text-xs pump-spinning';
+                        visPumpText.innerText = 'РАБОТАЕТ';
+                        visPumpText.className = 'text-xs font-bold text-amber-400';
+                    } else {
+                        visPumpIcon.className = 'fa-solid fa-circle-notch text-slate-500 text-xs';
+                        visPumpText.innerText = 'ВЫКЛ';
+                        visPumpText.className = 'text-xs font-bold text-slate-500';
+                    }
+                    break;
+
+                case 'work_hours/state':
+                case 'work_hours':
+                    telemetryData.burnSeconds = (parseFloat(val) || 0) * 3600;
+                    updateWorkHoursUI();
+                    break;
+            }
+        }
+
+        function setPumpMode(mode, fromWatchdog = false) {
+            pumpMode = mode;
+            syncPumpModeUI(mode);
+
+            if (client && client.connected) {
+                client.publish(`${cfg.prefix}/boiler/pump_mode/set`, mode, { retain: true });
+            }
+
+            if (mode === 'ON' || mode === 'OFF') {
+                startWatchdogTimer();
+            } else {
+                stopWatchdogTimer();
+            }
+        }
+
+        function syncPumpModeUI(mode) {
+            pumpMode = mode;
+            ['AUTO', 'ON', 'OFF'].forEach(m => {
+                const btn = document.getElementById('btnPump' + m.charAt(0) + m.slice(1).toLowerCase());
+                if (m === mode) {
+                    btn.className = "py-2.5 text-xs font-bold rounded-xl border border-blue-500 bg-blue-600 text-white transition shadow-lg shadow-blue-600/30 cursor-pointer";
+                } else {
+                    btn.className = "py-2.5 text-xs font-bold rounded-xl border border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 transition cursor-pointer";
+                }
+            });
+        }
+
+        function startWatchdogTimer() {
+            stopWatchdogTimer();
+            watchdogCount = 20;
+            document.getElementById('watchdogBadge').classList.remove('hidden');
+            document.getElementById('watchdogResetBox').classList.remove('hidden');
+            document.getElementById('watchdogSec').innerText = watchdogCount;
+            document.getElementById('watchdogTimeText').innerText = watchdogCount;
+
+            watchdogTimer = setInterval(() => {
+                watchdogCount--;
+                document.getElementById('watchdogSec').innerText = watchdogCount;
+                document.getElementById('watchdogTimeText').innerText = watchdogCount;
+
+                if (watchdogCount <= 0) {
+                    stopWatchdogTimer();
+                    setPumpMode('AUTO', true);
+                }
+            }, 1000);
+        }
+
+        function extendWatchdog() {
+            if (pumpMode !== 'AUTO') {
+                startWatchdogTimer();
+            }
+        }
+
+        function stopWatchdogTimer() {
+            if (watchdogTimer) {
+                clearInterval(watchdogTimer);
+                watchdogTimer = null;
+            }
+            document.getElementById('watchdogBadge').classList.add('hidden');
+            document.getElementById('watchdogResetBox').classList.add('hidden');
+        }
+
+        function updateInletSetUI(val) {
+            let clamped = Math.max(60.0, parseFloat(val) || 60.0);
+            document.getElementById('dispInletSet').innerText = clamped.toFixed(1) + ' °C';
+            document.getElementById('visSummaryInletSet').innerText = clamped.toFixed(1) + ' °C';
+        }
+
+        function sendInletSet(val) {
+            let clamped = Math.max(60.0, parseFloat(val) || 60.0);
+            updateInletSetUI(clamped);
+            if (client && client.connected) {
+                client.publish(`${cfg.prefix}/boiler/inlet_set/set`, String(clamped), { retain: true });
+            }
+        }
+
+        function updateFlueSetUI(val) {
+            document.getElementById('dispFlueSet').innerText = parseFloat(val).toFixed(0) + ' °C';
+        }
+
+        function sendFlueSet(val) {
+            updateFlueSetUI(val);
+            if (client && client.connected) {
+                client.publish(`${cfg.prefix}/boiler/flue_set/set`, String(val), { retain: true });
+            }
+        }
+
+        function updateFlameState() {
+            const threshold = parseFloat(document.getElementById('sliderFlueSet').value || 100);
+            const isBurning = telemetryData.tFlue > threshold || telemetryData.tSupply > 55;
+            
+            const container = document.getElementById('flameIconContainer');
+            const flameBadge = document.getElementById('telemetryFlameState');
+            
+            const visFlameContainer = document.getElementById('visFlameContainer');
+            const visFlameStatusBadge = document.getElementById('visFlameStatusBadge');
+            const visFlameStatusText = document.getElementById('visFlameStatusText');
+            const visSmoke = document.getElementById('visSmokeContainer');
+
+            if (isBurning) {
+                container.className = "w-10 h-10 rounded-xl bg-orange-600/30 border border-orange-500/50 flex items-center justify-center text-orange-400 text-xl font-bold flame-active";
+                flameBadge.innerText = "АКТИВНО";
+                flameBadge.className = "text-xs font-bold text-orange-400 bg-orange-950/80 px-2.5 py-1 rounded-lg border border-orange-800";
+
+                visFlameContainer.className = "flame-active flex items-end gap-1.5 z-10 my-2 opacity-100";
+                visFlameStatusBadge.className = "bg-amber-950/90 px-3 py-1.5 rounded-xl text-xs font-bold text-amber-300 border border-amber-600 flex items-center gap-2 animate-pulse";
+                visFlameStatusText.innerText = "АКТИВНОЕ ГОРЕНИЕ";
+                
+                visSmoke.style.display = "flex";
+            } else {
+                container.className = "w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-500 text-xl font-bold";
+                flameBadge.innerText = "ОЖИДАНИЕ";
+                flameBadge.className = "text-xs font-bold text-slate-400 bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-700";
+
+                visFlameContainer.className = "flex items-end gap-1.5 z-10 my-2 opacity-25 grayscale";
+                visFlameStatusBadge.className = "bg-slate-900/90 px-3 py-1.5 rounded-xl text-xs font-bold text-slate-400 border border-slate-700 flex items-center gap-2";
+                visFlameStatusText.innerText = "ОЖИДАНИЕ РОЗЖИГА";
+                
+                visSmoke.style.display = "none";
+            }
+
+            const visWaterJacket = document.getElementById('visWaterJacket');
+            if (telemetryData.tSupply > 70) {
+                visWaterJacket.className = "absolute inset-0 rounded-3xl bg-gradient-to-b from-red-500/25 via-amber-500/15 to-emerald-500/10 pointer-events-none transition-all duration-700";
+            } else if (telemetryData.tSupply > 50) {
+                visWaterJacket.className = "absolute inset-0 rounded-3xl bg-gradient-to-b from-amber-500/20 via-yellow-500/10 to-blue-500/10 pointer-events-none transition-all duration-700";
+            } else {
+                visWaterJacket.className = "absolute inset-0 rounded-3xl bg-gradient-to-b from-blue-600/15 via-slate-600/10 to-cyan-600/15 pointer-events-none transition-all duration-700";
+            }
+        }
+
+        function updateDiagnostics() {
+            const deltaT = Math.max(0, telemetryData.tSupply - telemetryData.tReturn);
+            document.getElementById('telemetryDelta').innerText = deltaT.toFixed(1) + ' °C';
+            document.getElementById('visDeltaBadge').innerText = deltaT.toFixed(1) + ' °C';
+
+            let eff = 0;
+            if (telemetryData.tFlue > 30) {
+                eff = 92 - (telemetryData.tFlue - 100) * 0.12 + (deltaT > 0 && deltaT <= 25 ? (deltaT - 15) * 0.3 : 0);
+                eff = Math.min(95, Math.max(25, Math.round(eff)));
+            }
+            document.getElementById('boilerEfficiency').innerText = eff + ' %';
+            document.getElementById('visSummaryEff').innerText = eff + ' %';
+            document.getElementById('efficiencyBar').style.width = eff + '%';
+
+            const hydroText = document.getElementById('hydraulicDiagText');
+            if (deltaT > 25.0) {
+                hydroText.innerHTML = `<i class="fa-solid fa-triangle-exclamation text-amber-400"></i> <span class="text-amber-400 font-bold">ВНИМАНИЕ: ΔT > 25°C (Возможен слабая циркуляция / завоздушивание)!</span>`;
+            } else {
+                hydroText.innerHTML = `<i class="fa-solid fa-circle-check text-emerald-400"></i> Циркуляция и гидравлика в норме`;
+            }
+
+            checkAlarms();
+        }
+
+        function checkAlarms() {
+            const banner = document.getElementById('criticalAlarmBanner');
+            const alarmText = document.getElementById('criticalAlarmText');
+            let alarms = [];
+
+            if (telemetryData.tSupply > 90.0) {
+                alarms.push(`Критический перегрев котла: ${telemetryData.tSupply.toFixed(1)}°C (>90°C)!`);
+            }
+            if (telemetryData.coPpm > 30) {
+                alarms.push(`Превышение угарного газа CO: ${telemetryData.coPpm} PPM (>30 PPM)!`);
+            }
+            if (telemetryData.pressure > 0 && telemetryData.pressure < 0.8) {
+                alarms.push(`Низкое давление теплоносителя: ${telemetryData.pressure.toFixed(2)} бар (<0.8 бар)!`);
+            }
+
+            if (alarms.length > 0) {
+                banner.classList.remove('hidden');
+                alarmText.innerText = alarms.join(' | ');
+            } else {
+                banner.classList.add('hidden');
+            }
+        }
+
+        function dismissAlarm() {
+            document.getElementById('criticalAlarmBanner').classList.add('hidden');
+        }
+
+        function updateWorkHoursUI() {
+            const hrs = Math.floor(telemetryData.burnSeconds / 3600);
+            const mins = Math.floor((telemetryData.burnSeconds % 3600) / 60);
+            document.getElementById('burnHoursDisplay').innerText = `${hrs} ч. ${mins} мин.`;
+            document.getElementById('visSummaryHours').innerText = `${hrs} ч. ${mins} мин.`;
+
+            const remaining = Math.max(0, 100 - Math.round((hrs % 200) / 200 * 100));
+            document.getElementById('chimneyPercent').innerText = remaining + '%';
+            document.getElementById('chimneyBar').style.width = remaining + '%';
+            document.getElementById('visSummaryChimney').innerText = remaining + '%';
+            document.getElementById('visSummaryChimneyBar').style.width = remaining + '%';
+        }
+
+        function resetChimneyTimer() {
+            document.getElementById('chimneyPercent').innerText = '100%';
+            document.getElementById('chimneyBar').style.width = '100%';
+            document.getElementById('visSummaryChimney').innerText = '100%';
+            document.getElementById('visSummaryChimneyBar').style.width = '100%';
+            showToast('Таймер обслуживания и чистки дымохода сброшен!', 'success');
+        }
+
+        function openConfigModal() {
+            document.getElementById('cfgHost').value = cfg.host;
+            document.getElementById('cfgPort').value = cfg.port;
+            document.getElementById('cfgPrefix').value = cfg.prefix;
+            document.getElementById('cfgUser').value = cfg.user;
+            document.getElementById('cfgPass').value = cfg.password;
+            document.getElementById('configModal').classList.remove('hidden');
+        }
+
+        function closeConfigModal() {
+            document.getElementById('configModal').classList.add('hidden');
+        }
+
+        function saveMqttConfig() {
+            cfg.host = document.getElementById('cfgHost').value.trim();
+            cfg.port = parseInt(document.getElementById('cfgPort').value) || 6247;
+            cfg.prefix = document.getElementById('cfgPrefix').value.trim();
+            cfg.user = document.getElementById('cfgUser').value.trim();
+            cfg.password = document.getElementById('cfgPass').value.trim();
+
+            localStorage.setItem('mqtt_heating_config', JSON.stringify(cfg));
+            closeConfigModal();
+            showToast("Настройки MQTT сохранены! Перезапуск...", "info");
+            setTimeout(() => location.reload(), 1200);
+        }
+
+        function exportConfigJSON() {
+            const exportData = {
+                version: "1.0",
+                timestamp: new Date().toISOString(),
+                mqtt: cfg,
+                boiler: {
+                    inlet_set: parseFloat(document.getElementById('sliderInletSet').value) || 60.0,
+                    flue_set: parseFloat(document.getElementById('sliderFlueSet').value) || 100,
+                    pump_mode: pumpMode,
+                    fuel_percent: fuelPercent,
+                    ash_percent: ashPercent
+                }
+            };
+            const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `heating_system_config_${new Date().toISOString().slice(0, 10)}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+            showToast("Конфигурация экспортирована в JSON", "success");
+        }
+
+        function importConfigJSON(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const imported = JSON.parse(e.target.result);
+                    if (imported.mqtt) {
+                        cfg = { ...cfg, ...imported.mqtt };
+                        localStorage.setItem('mqtt_heating_config', JSON.stringify(cfg));
+                    }
+                    if (imported.boiler) {
+                        if (imported.boiler.inlet_set) sendInletSet(imported.boiler.inlet_set);
+                        if (imported.boiler.flue_set) sendFlueSet(imported.boiler.flue_set);
+                    }
+                    showToast('Конфигурация успешно импортирована!', 'success');
+                    closeConfigModal();
+                    setTimeout(() => location.reload(), 1200);
+                } catch(err) {
+                    showToast('Ошибка импорта JSON: ' + err.message, 'error');
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        // Custom Toast Notification System (replaces alerts)
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            
+            let bgClass = "bg-slate-800 border-slate-700 text-slate-200";
+            let icon = "fa-circle-info text-sky-400";
+
+            if (type === 'success') {
+                bgClass = "bg-emerald-950/90 border-emerald-600 text-emerald-200";
+                icon = "fa-circle-check text-emerald-400";
+            } else if (type === 'error') {
+                bgClass = "bg-red-950/90 border-red-600 text-red-200";
+                icon = "fa-circle-exclamation text-red-400";
+            } else if (type === 'info') {
+                bgClass = "bg-sky-950/90 border-sky-600 text-sky-200";
+                icon = "fa-circle-info text-sky-400";
+            }
+
+            toast.className = `p-3.5 rounded-2xl border ${bgClass} shadow-2xl text-xs font-bold flex items-center gap-2.5 transition-all duration-300 transform translate-y-2 opacity-0`;
+            toast.innerHTML = `<i class="fa-solid ${icon} text-base"></i> <span>${message}</span>`;
+
+            container.appendChild(toast);
+
+            requestAnimationFrame(() => {
+                toast.classList.remove('translate-y-2', 'opacity-0');
+            });
+
+            setTimeout(() => {
+                toast.classList.add('opacity-0', 'translate-y-2');
+                setTimeout(() => toast.remove(), 300);
+            }, 3500);
+        }
+
+        function showToast(message, type = 'info') {
+// ... existings ...
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            initMQTT();
+            updateWorkHoursUI();
+            updateFlameState();
+        });
+    </script>
+</body>
+</html>
