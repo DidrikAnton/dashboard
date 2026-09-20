@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="ru" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Твердотопливный Котёл — Управление и Графика</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://unpkg.com/mqtt@4.3.7/dist/mqtt.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #060911; color: #f1f5f9; }
+        .glass-card { background: rgba(26, 36, 56, 0.85); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); }
+        .flame-active { animation: flameFlicker 0.8s ease-in-out infinite alternate; }
+        @keyframes flameFlicker {
+            0% { transform: scale(0.95); filter: drop-shadow(0 0 6px #ef4444); }
+            100% { transform: scale(1.05); filter: drop-shadow(0 0 15px #f97316); }
+        }
+    </style>
+</head>
+<body class="min-h-screen pb-12 pt-4">
+
+    <!-- HEADER -->
+    <header class="max-w-[1400px] mx-auto px-4 mb-4">
+        <div class="glass-card p-4 rounded-2xl flex flex-wrap items-center justify-between gap-4 shadow-xl">
+            <div class="flex items-center gap-4">
+                <a href="index.html" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl border border-slate-700 text-xs font-bold transition flex items-center gap-2">
+                    <i class="fa-solid fa-arrow-left"></i> Дашборд
+                </a>
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-orange-600/30 border border-orange-500/50 flex items-center justify-center text-orange-400 text-xl font-bold">
+                        <i class="fa-solid fa-fire text-lg"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-base font-extrabold text-white flex items-center gap-2">
+                            Твердотопливный Котёл
+                        </h1>
+                        <p class="text-[11px] text-slate-400">Управление насосом котла, дымогазами и сервисный учет</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-3">
+                <div id="mqttBadge" class="px-3 py-1.5 rounded-xl border border-amber-500/40 bg-amber-950/30 text-amber-400 text-xs font-bold flex items-center gap-2">
+                    <span id="mqttDot" class="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span>
+                    <span id="mqttStatusText">MQTT: Подключение...</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-[1400px] mx-auto px-4 space-y-6">
+
+        <!-- TELEMETRY & CONTROLS GRID -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+            <!-- TELEMETRY CARD -->
+            <div class="glass-card p-6 rounded-3xl space-y-4">
+                <h2 class="text-sm font-bold text-white uppercase tracking-wider border-b border-slate-800 pb-3 flex items-center gap-2">
+                    <i class="fa-solid fa-microchip text-sky-400"></i> Телеметрия (DS18B20)
+                </h2>
+
+                <div class="space-y-3">
+                    <div class="p-3 bg-slate-900/90 rounded-2xl border border-slate-800 flex justify-between items-center">
+                        <div class="flex items-center gap-2">
+                            <i class="fa-solid fa-temperature-arrow-up text-red-500"></i>
+                            <span class="text-xs text-slate-300 font-semibold">Температура подачи:</span>
+                        </div>
+                        <span id="telemetrySupply" class="text-lg font-mono font-extrabold text-red-400">75.0 °C</span>
+                    </div>
+
+                    <div class="p-3 bg-slate-900/90 rounded-2xl border border-slate-800 flex justify-between items-center">
+                        <div class="flex items-center gap-2">
+                            <i class="fa-solid fa-temperature-arrow-down text-emerald-400"></i>
+                            <span class="text-xs text-slate-300 font-semibold">Температура обратки:</span>
+                        </div>
+                        <span id="telemetryReturn" class="text-lg font-mono font-extrabold text-emerald-400">58.0 °C</span>
+                    </div>
+
+                    <div class="p-3 bg-slate-900/90 rounded-2xl border border-slate-800 flex justify-between items-center">
+                        <div class="flex items-center gap-2">
+                            <i class="fa-solid fa-wind text-orange-400"></i>
+                            <span class="text-xs text-slate-300 font-semibold">Температура дымогазов:</span>
+                        </div>
+                        <span id="telemetryFlue" class="text-lg font-mono font-extrabold text-orange-400">150.0 °C</span>
+                    </div>
+
+                    <div class="p-3 bg-slate-900/90 rounded-2xl border border-slate-800 flex justify-between items-center">
+                        <div class="flex items-center gap-2">
+                            <i class="fa-solid fa-fire-flame-curved text-amber-400"></i>
+                            <span class="text-xs text-slate-300 font-semibold">Состояние горения:</span>
+                        </div>
+                        <span id="telemetryFlameState" class="text-xs font-bold text-amber-400 bg-amber-950/80 px-2.5 py-1 rounded-lg border border-amber-800">АКТИВНО</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PUMP MODE & SETPOINTS CONTROL -->
+            <div class="glass-card p-6 rounded-3xl space-y-4">
+                <h2 class="text-sm font-bold text-white uppercase tracking-wider border-b border-slate-800 pb-3 flex items-center gap-2">
+                    <i class="fa-solid fa-sliders text-amber-400"></i> Управление Котловым Насосом
+                </h2>
+
+                <div class="space-y-4">
+                    <div>
+                        <label class="text-xs text-slate-400 font-semibold block mb-2">Режим работы насоса котла:</label>
+                        <div class="grid grid-cols-3 gap-2">
+                            <button onclick="setPumpMode('AUTO')" id="btnPumpAuto" class="py-2.5 text-xs font-bold rounded-xl border border-blue-500 bg-blue-600 text-white transition">АВТО</button>
+                            <button onclick="setPumpMode('ON')" id="btnPumpOn" class="py-2.5 text-xs font-bold rounded-xl border border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 transition">ВКЛ</button>
+                            <button onclick="setPumpMode('OFF')" id="btnPumpOff" class="py-2.5 text-xs font-bold rounded-xl border border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 transition">ВЫКЛ</button>
+                        </div>
+                        <p class="text-[10px] text-slate-400 mt-2">АВТО: Насос включается при T котла &gt; 55°C или дымогазах &gt; 100°C для защиты от конденсата.</p>
+                    </div>
+
+                    <div class="p-3 bg-slate-900/90 rounded-2xl border border-slate-800 space-y-2">
+                        <div class="flex justify-between items-center text-xs">
+                            <span class="text-slate-300 font-semibold">Уставка обратки (boiler/inlet_set):</span>
+                            <span id="dispInletSet" class="font-mono font-bold text-emerald-400">60.0 °C</span>
+                        </div>
+                        <input type="range" id="sliderInletSet" min="45" max="75" value="60" step="0.5" oninput="updateInletSet(this.value)" class="w-full accent-emerald-500">
+                    </div>
+
+                    <div class="p-3 bg-slate-900/90 rounded-2xl border border-slate-800 space-y-2">
+                        <div class="flex justify-between items-center text-xs">
+                            <span class="text-slate-300 font-semibold">Порог горения (boiler/flue_set):</span>
+                            <span id="dispFlueSet" class="font-mono font-bold text-orange-400">100 °C</span>
+                        </div>
+                        <input type="range" id="sliderFlueSet" min="50" max="180" value="100" step="1" oninput="updateFlueSet(this.value)" class="w-full accent-orange-500">
+                    </div>
+                </div>
+            </div>
+
+            <!-- SERVICE & BURN COUNTER -->
+            <div class="glass-card p-6 rounded-3xl space-y-4">
+                <h2 class="text-sm font-bold text-white uppercase tracking-wider border-b border-slate-800 pb-3 flex items-center gap-2">
+                    <i class="fa-solid fa-clock-rotate-left text-purple-400"></i> Сервис и Учет Горения
+                </h2>
+
+                <div class="space-y-3">
+                    <div class="p-3 bg-slate-900/90 rounded-2xl border border-slate-800">
+                        <div class="text-[11px] text-slate-400">Суммарное время горения:</div>
+                        <div id="burnHoursDisplay" class="text-xl font-mono font-extrabold text-purple-400 mt-1">142 ч. 30 мин.</div>
+                    </div>
+
+                    <div class="p-3 bg-slate-900/90 rounded-2xl border border-slate-800">
+                        <div class="flex justify-between items-center">
+                            <div class="text-[11px] text-slate-400">Ресурс до чистки дымохода:</div>
+                            <span id="chimneyPercent" class="text-xs font-mono font-bold text-amber-400">68%</span>
+                        </div>
+                        <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden mt-2">
+                            <div id="chimneyBar" class="bg-amber-500 h-full w-[68%]"></div>
+                        </div>
+                    </div>
+
+                    <button onclick="resetChimneyTimer()" class="w-full py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-xs rounded-xl transition flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-broom text-amber-400"></i> Сбросить таймер чистки дымохода
+                    </button>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- CHART SECTION -->
+        <div class="glass-card p-6 rounded-3xl space-y-4 shadow-2xl">
+            <h2 class="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                <i class="fa-solid fa-chart-line text-blue-400"></i> Динамика Нагрева Котла и Дымогазов
+            </h2>
+            <div class="h-72 w-full">
+                <canvas id="boilerChart"></canvas>
+            </div>
+        </div>
+
+    </main>
+
+    <script>
+        let cfg = { host: "m4.wqtt.ru", port: 6247, prefix: "home/heating", user: "didrik", password: "7777777" };
+        try {
+            const saved = localStorage.getItem('mqtt_heating_config');
+            if (saved) cfg = { ...cfg, ...JSON.parse(saved) };
+        } catch(e) {}
+
+        let pumpMode = 'AUTO';
+        let boilerChart;
+
+        // Init Chart
+        const ctx = document.getElementById('boilerChart').getContext('2d');
+        boilerChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: Array.from({length: 12}, (_, i) => `${i*5} мин`),
+                datasets: [
+                    { label: 'Подача (°C)', data: [20, 25, 35, 50, 65, 72, 75, 75, 74, 75, 75, 75], borderColor: '#ef4444', backgroundColor: 'rgba(239, 68, 68, 0.1)', fill: true, tension: 0.3 },
+                    { label: 'Дымогазы (°C)', data: [20, 40, 90, 160, 180, 165, 150, 148, 152, 150, 150, 150], borderColor: '#f97316', backgroundColor: 'transparent', tension: 0.3 }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { labels: { color: '#94a3b8' } } },
+                scales: {
+                    x: { ticks: { color: '#64748b' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                    y: { ticks: { color: '#64748b' }, grid: { color: 'rgba(255,255,255,0.05)' } }
+                }
+            }
+        });
+
+        // MQTT Client Setup (Read only on startup - safe start)
+        const client = mqtt.connect(`wss://${cfg.host}:${cfg.port}/mqtt`, {
+            username: cfg.user,
+            password: cfg.password,
+            clientId: 'boiler_page_' + Math.random().toString(16).substr(2, 8)
+        });
+
+        client.on('connect', () => {
+            document.getElementById('mqttStatusText').innerText = 'MQTT: Подключено';
+            document.getElementById('mqttDot').className = 'w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse';
+            client.subscribe(`${cfg.prefix}/#`);
+        });
+
+        client.on('message', (topic, payload) => {
+            const val = payload.toString();
+            if (topic.endsWith('boiler/temp')) document.getElementById('telemetrySupply').innerText = parseFloat(val).toFixed(1) + ' °C';
+            if (topic.endsWith('boiler/flue_temp')) document.getElementById('telemetryFlue').innerText = parseFloat(val).toFixed(1) + ' °C';
+            if (topic.endsWith('boiler/inlet_set')) {
+                document.getElementById('dispInletSet').innerText = parseFloat(val).toFixed(1) + ' °C';
+                document.getElementById('sliderInletSet').value = val;
+            }
+            if (topic.endsWith('boiler/flue_set')) {
+                document.getElementById('dispFlueSet').innerText = parseFloat(val).toFixed(0) + ' °C';
+                document.getElementById('sliderFlueSet').value = val;
+            }
+        });
+
+        function setPumpMode(mode) {
+            pumpMode = mode;
+            ['AUTO', 'ON', 'OFF'].forEach(m => {
+                const btn = document.getElementById('btnPump' + m.charAt(0) + m.slice(1).toLowerCase());
+                if (m === mode) {
+                    btn.className = "py-2.5 text-xs font-bold rounded-xl border border-blue-500 bg-blue-600 text-white transition";
+                } else {
+                    btn.className = "py-2.5 text-xs font-bold rounded-xl border border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 transition";
+                }
+            });
+            client.publish(`${cfg.prefix}/boiler/pump_mode/set`, mode, { retain: true });
+        }
+
+        function updateInletSet(val) {
+            document.getElementById('dispInletSet').innerText = parseFloat(val).toFixed(1) + ' °C';
+            client.publish(`${cfg.prefix}/boiler/inlet_set/set`, String(val), { retain: true });
+        }
+
+        function updateFlueSet(val) {
+            document.getElementById('dispFlueSet').innerText = parseFloat(val).toFixed(0) + ' °C';
+            client.publish(`${cfg.prefix}/boiler/flue_set/set`, String(val), { retain: true });
+        }
+
+        function resetChimneyTimer() {
+            document.getElementById('chimneyPercent').innerText = '100%';
+            document.getElementById('chimneyBar').style.width = '100%';
+            alert('Таймер чистки дымохода успешно сброшен!');
+        }
+    </script>
+</body>
+</html>

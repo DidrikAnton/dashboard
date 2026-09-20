@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="ru" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Буферная Ёмкость — Послойная Температура и Потери</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://unpkg.com/mqtt@4.3.7/dist/mqtt.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #060911; color: #f1f5f9; }
+        .glass-card { background: rgba(26, 36, 56, 0.85); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); }
+    </style>
+</head>
+<body class="min-h-screen pb-12 pt-4">
+
+    <header class="max-w-[1400px] mx-auto px-4 mb-4">
+        <div class="glass-card p-4 rounded-2xl flex flex-wrap items-center justify-between gap-4 shadow-xl">
+            <div class="flex items-center gap-4">
+                <a href="index.html" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl border border-slate-700 text-xs font-bold transition flex items-center gap-2">
+                    <i class="fa-solid fa-arrow-left"></i> Дашборд
+                </a>
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-blue-600/30 border border-blue-500/50 flex items-center justify-center text-blue-400 text-xl font-bold">
+                        <i class="fa-solid fa-layer-group"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-base font-extrabold text-white flex items-center gap-2">
+                            Буферная Ёмкость (1000 литров)
+                        </h1>
+                        <p class="text-[11px] text-slate-400">Послойный мониторинг T1-T4, теплопотери и запас энергии</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-3">
+                <div id="mqttBadge" class="px-3 py-1.5 rounded-xl border border-amber-500/40 bg-amber-950/30 text-amber-400 text-xs font-bold flex items-center gap-2">
+                    <span id="mqttDot" class="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span>
+                    <span id="mqttStatusText">MQTT: Подключение...</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-[1400px] mx-auto px-4 space-y-6">
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+            <!-- LAYERED SENSORS DISPLAY -->
+            <div class="glass-card p-6 rounded-3xl space-y-4">
+                <h2 class="text-sm font-bold text-white uppercase tracking-wider border-b border-slate-800 pb-3 flex items-center gap-2">
+                    <i class="fa-solid fa-temperature-half text-red-400"></i> Послойные Датчики
+                </h2>
+
+                <div class="space-y-3">
+                    <div class="p-3 bg-slate-900/90 rounded-2xl border border-slate-800 flex justify-between items-center">
+                        <span class="text-xs text-slate-300 font-semibold">T1 (Верхний узел):</span>
+                        <span id="bufT1" class="text-lg font-mono font-extrabold text-red-400">75.0 °C</span>
+                    </div>
+                    <div class="p-3 bg-slate-900/90 rounded-2xl border border-slate-800 flex justify-between items-center">
+                        <span class="text-xs text-slate-300 font-semibold">T2 (Средний-верх):</span>
+                        <span id="bufT2" class="text-lg font-mono font-extrabold text-orange-400">62.0 °C</span>
+                    </div>
+                    <div class="p-3 bg-slate-900/90 rounded-2xl border border-slate-800 flex justify-between items-center">
+                        <span class="text-xs text-slate-300 font-semibold">T3 (Средний-низ):</span>
+                        <span id="bufT3" class="text-lg font-mono font-extrabold text-yellow-400">45.0 °C</span>
+                    </div>
+                    <div class="p-3 bg-slate-900/90 rounded-2xl border border-slate-800 flex justify-between items-center">
+                        <span class="text-xs text-slate-300 font-semibold">T4 (Нижний узел):</span>
+                        <span id="bufT4" class="text-lg font-mono font-extrabold text-blue-400">30.0 °C</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- HEAT LOSS & ENERGY MATH -->
+            <div class="glass-card p-6 rounded-3xl space-y-4">
+                <h2 class="text-sm font-bold text-white uppercase tracking-wider border-b border-slate-800 pb-3 flex items-center gap-2">
+                    <i class="fa-solid fa-calculator text-amber-400"></i> Энергетика и Потери
+                </h2>
+
+                <div class="space-y-3">
+                    <div class="p-3 bg-slate-900/90 rounded-2xl border border-slate-800">
+                        <div class="text-[11px] text-slate-400">Запас накопленной энергии:</div>
+                        <div id="bufEnergy" class="text-2xl font-mono font-extrabold text-amber-400 mt-1">32.5 кВт·ч</div>
+                    </div>
+
+                    <div class="p-3 bg-slate-900/90 rounded-2xl border border-slate-800">
+                        <div class="text-[11px] text-slate-400">Скорость остывания бака:</div>
+                        <div id="bufCoolRate" class="text-base font-mono font-bold text-sky-400 mt-1">-1.2 °C/час</div>
+                    </div>
+
+                    <div class="p-3 bg-slate-900/90 rounded-2xl border border-slate-800">
+                        <div class="text-[11px] text-slate-400">Текущий отбор мощности в дом:</div>
+                        <div id="bufHeatPower" class="text-base font-mono font-bold text-emerald-400 mt-1">8.4 кВт</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- THRESHOLD CONTROL -->
+            <div class="glass-card p-6 rounded-3xl space-y-4">
+                <h2 class="text-sm font-bold text-white uppercase tracking-wider border-b border-slate-800 pb-3 flex items-center gap-2">
+                    <i class="fa-solid fa-gears text-purple-400"></i> Настройка Порога Запуска
+                </h2>
+
+                <div class="p-4 bg-slate-900/90 rounded-2xl border border-slate-800 space-y-3">
+                    <div class="flex justify-between items-center text-xs">
+                        <span class="text-slate-300 font-semibold">Мин. T1 для разрешения контуров:</span>
+                        <span id="dispMinT1" class="font-mono font-bold text-purple-400">45.0 °C</span>
+                    </div>
+                    <input type="range" id="sliderMinT1" min="30" max="60" value="45" step="1" oninput="updateMinT1(this.value)" class="w-full accent-purple-500">
+                    <p class="text-[10px] text-slate-400">При спаде T1 ниже уставки контуры отопления блокируются или переключаются на электрокотёл.</p>
+                </div>
+            </div>
+
+        </div>
+
+    </main>
+
+    <script>
+        let cfg = { host: "m4.wqtt.ru", port: 6247, prefix: "home/heating", user: "didrik", password: "7777777" };
+        try {
+            const saved = localStorage.getItem('mqtt_heating_config');
+            if (saved) cfg = { ...cfg, ...JSON.parse(saved) };
+        } catch(e) {}
+
+        const client = mqtt.connect(`wss://${cfg.host}:${cfg.port}/mqtt`, {
+            username: cfg.user,
+            password: cfg.password,
+            clientId: 'buffer_page_' + Math.random().toString(16).substr(2, 8)
+        });
+
+        client.on('connect', () => {
+            document.getElementById('mqttStatusText').innerText = 'MQTT: Подключено';
+            document.getElementById('mqttDot').className = 'w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse';
+            client.subscribe(`${cfg.prefix}/#`);
+        });
+
+        client.on('message', (topic, payload) => {
+            const val = payload.toString();
+            if (topic.endsWith('buffer/t1')) document.getElementById('bufT1').innerText = parseFloat(val).toFixed(1) + ' °C';
+            if (topic.endsWith('buffer/t2')) document.getElementById('bufT2').innerText = parseFloat(val).toFixed(1) + ' °C';
+            if (topic.endsWith('buffer/t3')) document.getElementById('bufT3').innerText = parseFloat(val).toFixed(1) + ' °C';
+            if (topic.endsWith('buffer/t4')) document.getElementById('bufT4').innerText = parseFloat(val).toFixed(1) + ' °C';
+            if (topic.endsWith('buffer/energy')) document.getElementById('bufEnergy').innerText = parseFloat(val).toFixed(1) + ' кВт·ч';
+        });
+
+        function updateMinT1(val) {
+            document.getElementById('dispMinT1').innerText = parseFloat(val).toFixed(1) + ' °C';
+            client.publish(`${cfg.prefix}/buffer/min_t1/set`, String(val), { retain: true });
+        }
+    </script>
+</body>
+</html>
