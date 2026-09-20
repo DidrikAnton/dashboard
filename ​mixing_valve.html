@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="ru" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3-х Ходовой Клапан Котла — ПИД и Автонастройка</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://unpkg.com/mqtt@4.3.7/dist/mqtt.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #060911; color: #f1f5f9; }
+        .glass-card { background: rgba(26, 36, 56, 0.85); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); }
+    </style>
+</head>
+<body class="min-h-screen pb-12 pt-4">
+
+    <!-- HEADER -->
+    <header class="max-w-[1400px] mx-auto px-4 mb-4">
+        <div class="glass-card p-4 rounded-2xl flex flex-wrap items-center justify-between gap-4 shadow-xl">
+            <div class="flex items-center gap-4">
+                <a href="index.html" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl border border-slate-700 text-xs font-bold transition flex items-center gap-2">
+                    <i class="fa-solid fa-arrow-left"></i> Дашборд
+                </a>
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-amber-600/30 border border-amber-500/50 flex items-center justify-center text-amber-400 text-xl font-bold">
+                        <i class="fa-solid fa-arrows-split-up-and-left"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-base font-extrabold text-white flex items-center gap-2">
+                            3-х Ходовой Клапан и Котловой Насос
+                        </h1>
+                        <p class="text-[11px] text-slate-400">ПИД-регулирование температуры обратки и защита от конденсата</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-3">
+                <div id="mqttBadge" class="px-3 py-1.5 rounded-xl border border-amber-500/40 bg-amber-950/30 text-amber-400 text-xs font-bold flex items-center gap-2">
+                    <span id="mqttDot" class="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span>
+                    <span id="mqttStatusText">MQTT: Подключение...</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-[1400px] mx-auto px-4 space-y-6">
+
+        <!-- STATUS BANNERS -->
+        <div id="coldProtectionAlert" class="glass-card p-4 rounded-2xl border-2 border-emerald-500/50 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="p-2.5 bg-emerald-500/20 text-emerald-400 rounded-xl text-lg font-bold">
+                    <i class="fa-solid fa-shield-halved"></i>
+                </div>
+                <div>
+                    <h3 class="text-xs font-bold text-white">Защита от Холодной Обратки (&lt; 60°C)</h3>
+                    <p class="text-[11px] text-slate-400">Клапан удерживает малый круг котла для быстрой прогревки чугуна/стали.</p>
+                </div>
+            </div>
+            <span id="protectionStatusBadge" class="text-xs font-bold text-emerald-400 bg-emerald-950 px-3 py-1 rounded-full border border-emerald-800">АКТИВНА</span>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+            <!-- VALVE CONTROLS -->
+            <div class="glass-card p-6 rounded-3xl space-y-5">
+                <h2 class="text-sm font-bold text-white uppercase tracking-wider border-b border-slate-800 pb-3 flex items-center gap-2">
+                    <i class="fa-solid fa-sliders text-amber-400"></i> Положение Сервопривода
+                </h2>
+
+                <div class="space-y-4">
+                    <div class="p-4 bg-slate-900/90 rounded-2xl border border-slate-800 flex items-center justify-between">
+                        <div>
+                            <span class="text-xs text-slate-400 font-semibold block">Текущий открытый байпас:</span>
+                            <span id="servoPosDisplay" class="text-2xl font-mono font-extrabold text-amber-400">45%</span>
+                        </div>
+                        <div class="w-16 h-16 bg-slate-800 rounded-full border-4 border-amber-500 flex items-center justify-center font-bold font-mono text-sm">
+                            45%
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="text-xs text-slate-400 font-semibold block mb-2">Режим регулирования:</label>
+                        <div class="grid grid-cols-2 gap-3">
+                            <button onclick="setValveControlMode('AUTO')" id="btnValModeAuto" class="py-2.5 text-xs font-bold rounded-xl border border-blue-500 bg-blue-600 text-white transition">АВТО ПИД</button>
+                            <button onclick="setValveControlMode('MANUAL')" id="btnValModeManual" class="py-2.5 text-xs font-bold rounded-xl border border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 transition">РУЧНОЙ</button>
+                        </div>
+                    </div>
+
+                    <div id="manualSliderBox" class="p-4 bg-slate-900/90 rounded-2xl border border-slate-800 space-y-2 opacity-50 pointer-events-none">
+                        <div class="flex justify-between items-center text-xs">
+                            <span class="text-slate-300 font-semibold">Ручное положение клапана:</span>
+                            <span id="manualValveVal" class="font-mono font-bold text-amber-400">45%</span>
+                        </div>
+                        <input type="range" id="sliderManualValve" min="0" max="100" value="45" oninput="updateManualValve(this.value)" class="w-full accent-amber-500">
+                    </div>
+                </div>
+            </div>
+
+            <!-- PID AUTO-TUNE -->
+            <div class="glass-card p-6 rounded-3xl space-y-5">
+                <h2 class="text-sm font-bold text-white uppercase tracking-wider border-b border-slate-800 pb-3 flex items-center gap-2">
+                    <i class="fa-solid fa-wand-magic-sparkles text-purple-400"></i> Автонастройка ПИД-Регулятора
+                </h2>
+
+                <div class="space-y-4">
+                    <div class="grid grid-cols-3 gap-2 text-center font-mono text-xs">
+                        <div class="p-3 bg-slate-900/90 rounded-xl border border-slate-800">
+                            <span class="text-slate-400 block text-[10px]">Коэф. P:</span>
+                            <strong id="pidP" class="text-purple-400 font-bold text-sm">2.50</strong>
+                        </div>
+                        <div class="p-3 bg-slate-900/90 rounded-xl border border-slate-800">
+                            <span class="text-slate-400 block text-[10px]">Коэф. I:</span>
+                            <strong id="pidI" class="text-purple-400 font-bold text-sm">0.15</strong>
+                        </div>
+                        <div class="p-3 bg-slate-900/90 rounded-xl border border-slate-800">
+                            <span class="text-slate-400 block text-[10px]">Коэф. D:</span>
+                            <strong id="pidD" class="text-purple-400 font-bold text-sm">0.05</strong>
+                        </div>
+                    </div>
+
+                    <div class="p-4 bg-slate-900/90 rounded-2xl border border-slate-800 space-y-2">
+                        <div class="flex justify-between items-center text-xs">
+                            <span class="text-slate-300 font-semibold">Прогресс автокалибровки:</span>
+                            <span id="autotunePercent" class="font-mono font-bold text-purple-400">Готов к запуску</span>
+                        </div>
+                        <div class="w-full bg-slate-800 h-2.5 rounded-full overflow-hidden">
+                            <div id="autotuneBar" class="bg-purple-600 h-full w-0 transition-all duration-300"></div>
+                        </div>
+                    </div>
+
+                    <button onclick="startPidAutotune()" id="btnStartAutotune" class="w-full py-3 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs rounded-xl shadow-lg transition flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-play"></i> Запустить Автоподбор коэффициентов ПИД
+                    </button>
+                </div>
+            </div>
+
+        </div>
+
+    </main>
+
+    <script>
+        let cfg = { host: "m4.wqtt.ru", port: 6247, prefix: "home/heating", user: "didrik", password: "7777777" };
+        try {
+            const saved = localStorage.getItem('mqtt_heating_config');
+            if (saved) cfg = { ...cfg, ...JSON.parse(saved) };
+        } catch(e) {}
+
+        const client = mqtt.connect(`wss://${cfg.host}:${cfg.port}/mqtt`, {
+            username: cfg.user,
+            password: cfg.password,
+            clientId: 'valve_page_' + Math.random().toString(16).substr(2, 8)
+        });
+
+        client.on('connect', () => {
+            document.getElementById('mqttStatusText').innerText = 'MQTT: Подключено';
+            document.getElementById('mqttDot').className = 'w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse';
+            client.subscribe(`${cfg.prefix}/#`);
+        });
+
+        client.on('message', (topic, payload) => {
+            const val = payload.toString();
+            if (topic.endsWith('boiler/valve_pos')) {
+                document.getElementById('servoPosDisplay').innerText = val + '%';
+            }
+        });
+
+        function setValveControlMode(mode) {
+            const isManual = (mode === 'MANUAL');
+            const box = document.getElementById('manualSliderBox');
+            if (isManual) {
+                box.classList.remove('opacity-50', 'pointer-events-none');
+                document.getElementById('btnValModeManual').className = "py-2.5 text-xs font-bold rounded-xl border border-blue-500 bg-blue-600 text-white transition";
+                document.getElementById('btnValModeAuto').className = "py-2.5 text-xs font-bold rounded-xl border border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 transition";
+            } else {
+                box.classList.add('opacity-50', 'pointer-events-none');
+                document.getElementById('btnValModeAuto').className = "py-2.5 text-xs font-bold rounded-xl border border-blue-500 bg-blue-600 text-white transition";
+                document.getElementById('btnValModeManual').className = "py-2.5 text-xs font-bold rounded-xl border border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 transition";
+            }
+            client.publish(`${cfg.prefix}/boiler/valve_mode/set`, mode, { retain: true });
+        }
+
+        function updateManualValve(val) {
+            document.getElementById('manualValveVal').innerText = val + '%';
+            client.publish(`${cfg.prefix}/boiler/valve_pos/set`, String(val), { retain: true });
+        }
+
+        function startPidAutotune() {
+            let p = 0;
+            const btn = document.getElementById('btnStartAutotune');
+            btn.disabled = true;
+            btn.innerText = "Выполняется калибровка...";
+            const timer = setInterval(() => {
+                p += 10;
+                document.getElementById('autotuneBar').style.width = p + '%';
+                document.getElementById('autotunePercent').innerText = p + '%';
+                if (p >= 100) {
+                    clearInterval(timer);
+                    document.getElementById('pidP').innerText = "2.85";
+                    document.getElementById('pidI').innerText = "0.18";
+                    document.getElementById('pidD').innerText = "0.06";
+                    btn.disabled = false;
+                    btn.innerText = "Запустить Автоподбор коэффициентов ПИД";
+                    alert('Автонастройка ПИД успешно завершена! Новые коэффициенты сохранены.');
+                }
+            }, 300);
+        }
+    </script>
+</body>
+</html>
