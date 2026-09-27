@@ -1,0 +1,1723 @@
+<!DOCTYPE html>
+<html lang="ru" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ПЗА и Погода — Управление Отоплением (PZA.html)</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: { 50: '#eff6ff', 100: '#dbeafe', 500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8', 800: '#1e40af', 900: '#1e3a8a' }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- FontAwesome icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- MQTT.js Library -->
+    <script src="https://unpkg.com/mqtt@4.3.7/dist/mqtt.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .font-mono-code { font-family: 'JetBrains Mono', monospace; }
+        .glass-panel { background: rgba(255, 255, 255, 0.88); backdrop-filter: blur(16px); }
+        .dark .glass-panel { background: rgba(30, 41, 59, 0.88); backdrop-filter: blur(16px); }
+        .glow-blue { box-shadow: 0 0 25px -5px rgba(59, 130, 246, 0.3); }
+        .glow-emerald { box-shadow: 0 0 25px -5px rgba(16, 185, 129, 0.35); }
+        .glow-amber { box-shadow: 0 0 25px -5px rgba(245, 158, 11, 0.3); }
+        .glow-rose { box-shadow: 0 0 25px -5px rgba(244, 63, 94, 0.3); }
+        
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.05); }
+        ::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.5); border-radius: 4px; }
+    </style>
+</head>
+<body class="h-full bg-slate-100 dark:bg-slate-900 text-slate-800 dark:text-slate-100 transition-colors duration-200 flex flex-col selection:bg-blue-500 selection:text-white">
+
+    <header class="bg-white/90 dark:bg-slate-800/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-700/80 shadow-sm sticky top-0 z-40">
+        <div class="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 min-h-[4.25rem] py-2 flex items-center justify-between gap-2 flex-wrap sm:flex-nowrap">
+            <div class="flex items-center space-x-2 sm:space-x-3 min-w-0 flex-1">
+                <a href="index.html" class="p-2 sm:p-2.5 rounded-xl bg-slate-100 dark:bg-slate-700/80 hover:bg-slate-200 dark:hover:bg-slate-600 transition shrink-0 group" title="На главный дашборд">
+                    <i class="fa-solid fa-arrow-left text-slate-600 dark:text-slate-300 group-hover:-translate-x-0.5 transition-transform text-sm"></i>
+                </a>
+                <div class="flex items-center space-x-2 sm:space-x-3 min-w-0">
+                    <div class="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-white shadow-md shadow-blue-500/20 shrink-0">
+                        <i class="fa-solid fa-cloud-sun text-base sm:text-lg"></i>
+                    </div>
+                    <div class="min-w-0">
+                        <div class="flex items-center space-x-1.5 sm:space-x-2 truncate">
+                            <h1 class="font-bold text-sm sm:text-lg leading-tight truncate">ПЗА и Погода</h1>
+                            <span class="text-[9px] sm:text-[10px] font-bold px-1.5 sm:px-2 py-0.5 rounded-md bg-blue-100 text-blue-700 dark:bg-blue-900/60 dark:text-blue-300 shrink-0">PZA.html</span>
+                        </div>
+                        
+                        <button onclick="openLocationModal()" class="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5 hover:text-blue-600 dark:hover:text-blue-400 transition cursor-pointer group mt-0.5" title="Нажмите, чтобы изменить город">
+                            <i class="fa-solid fa-location-dot text-rose-500 text-[11px] group-hover:scale-125 transition-transform"></i>
+                            <span id="header-location-name" class="font-bold border-b border-dashed border-slate-400 dark:border-slate-500 hover:border-blue-500">г. Смолевичи</span>
+                            <i class="fa-solid fa-pen-to-square text-[10px] opacity-60 group-hover:opacity-100"></i>
+                            <span class="hidden sm:inline text-slate-400 font-normal">• Эквитермическая автоматика</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex items-center space-x-1.5 sm:space-x-2 shrink-0">
+                <!-- ГЛАВНЫЙ ПЕРЕКЛЮЧАТЕЛЬ ПЗА (ВКЛ / ВЫКЛ) -->
+                <div class="flex items-center bg-slate-100 dark:bg-slate-700/90 p-1 rounded-xl border border-slate-200/80 dark:border-slate-600/80 shadow-inner">
+                    <button id="pza-main-toggle-btn" onclick="togglePzaStateFromUI()" 
+                            class="px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all flex items-center space-x-1.5 shadow-sm bg-emerald-600 text-white glow-emerald cursor-pointer">
+                        <i id="pza-toggle-icon" class="fa-solid fa-bolt text-amber-300 animate-pulse"></i>
+                        <span id="pza-toggle-label">ПЗА: ВКЛ</span>
+                    </button>
+                </div>
+
+                <!-- Статус подключения MQTT -->
+                <div id="mqtt-status-badge" onclick="openConfigModal()" title="Нажмите для настройки подключения MQTT" class="flex items-center space-x-1.5 px-2.5 sm:px-3 py-1.5 rounded-full text-[11px] sm:text-xs font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border border-amber-300/80 dark:border-amber-700/80 transition-all cursor-pointer hover:opacity-90">
+                    <span id="mqtt-dot" class="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse shrink-0"></span>
+                    <span id="mqtt-text" class="truncate">Подключение...</span>
+                </div>
+
+                <button onclick="openTopicsModal()" title="Настройка Топиков MQTT" class="p-2 sm:p-2.5 rounded-xl bg-slate-100 dark:bg-slate-700/80 hover:bg-slate-200 dark:hover:bg-slate-600 transition text-slate-600 dark:text-slate-300 flex items-center gap-1">
+                    <i class="fa-solid fa-sliders text-xs"></i>
+                    <span class="text-xs font-bold hidden md:inline">Топики</span>
+                </button>
+
+                <button onclick="fetchOpenMeteoWeather()" title="Обновить метеоданные с Open-Meteo" class="p-2 sm:p-2.5 rounded-xl bg-slate-100 dark:bg-slate-700/80 hover:bg-slate-200 dark:hover:bg-slate-600 transition text-slate-600 dark:text-slate-300">
+                    <i class="fa-solid fa-rotate text-xs"></i>
+                </button>
+
+                <button onclick="openConfigModal()" title="Настройки MQTT Брокера" class="p-2 sm:p-2.5 rounded-xl bg-slate-100 dark:bg-slate-700/80 hover:bg-slate-200 dark:hover:bg-slate-600 transition text-slate-600 dark:text-slate-300">
+                    <i class="fa-solid fa-gear text-xs"></i>
+                </button>
+
+                <button onclick="toggleDarkMode()" title="Переключить тему" class="p-2 sm:p-2.5 rounded-xl bg-slate-100 dark:bg-slate-700/80 hover:bg-slate-200 dark:hover:bg-slate-600 transition text-slate-600 dark:text-slate-300">
+                    <i class="fa-solid fa-moon dark:hidden text-xs"></i>
+                    <i class="fa-solid fa-sun hidden dark:inline text-amber-400 text-xs"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-6 lg:p-8 space-y-4 sm:space-y-6 overflow-y-auto">
+
+        <!-- Toast уведомления -->
+        <div id="toast-message" class="hidden fixed bottom-5 right-5 z-50 p-4 rounded-2xl bg-slate-900 text-white shadow-2xl border border-slate-700 max-w-sm transition-all duration-300 flex items-center space-x-3">
+            <i id="toast-icon" class="fa-solid fa-circle-info text-blue-400 text-xl"></i>
+            <span id="toast-text" class="text-xs font-semibold">Сообщение</span>
+        </div>
+
+        <!-- Виджеты: Физический датчик, Прогноз и Итоговые уставки ПЗА -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
+            
+            <!-- 1. Физический уличный датчик -->
+            <div onclick="openTopicsModal()" 
+                 class="glass-panel p-5 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm hover:border-blue-500 dark:hover:border-blue-400 transition cursor-pointer relative overflow-hidden group">
+                <div class="absolute -right-4 -bottom-4 text-slate-200/60 dark:text-slate-800/40 text-8xl pointer-events-none group-hover:scale-110 transition duration-300">
+                    <i class="fa-solid fa-temperature-arrow-down"></i>
+                </div>
+                <div class="flex justify-between items-start relative z-10">
+                    <div>
+                        <div class="flex items-center space-x-2">
+                            <p class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Датчик улицы (Факт)</p>
+                            <span id="override-badge" class="hidden text-[9px] px-1.5 py-0.5 rounded bg-amber-500 text-white font-bold">РУЧНОЙ</span>
+                        </div>
+                        <h3 class="text-3xl font-extrabold mt-1 tracking-tight">
+                            <span id="val-outdoor-temp">10.0</span> <span class="text-xl font-normal text-slate-500">°C</span>
+                        </h3>
+                    </div>
+                    <span class="p-3 rounded-xl bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 shadow-sm">
+                        <i class="fa-solid fa-microchip text-xl"></i>
+                    </span>
+                </div>
+                <div class="mt-4 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 pt-2.5 border-t border-slate-100 dark:border-slate-800 relative z-10">
+                    <span>Топик: <strong id="sensor-status-text" class="text-emerald-600 dark:text-emerald-400 font-semibold">MQTT</strong></span>
+                    <span class="font-mono text-[11px] truncate max-w-[140px]" id="sensor-topic-display">home/heating/sensors/outdoor_temp</span>
+                </div>
+            </div>
+
+            <!-- 2. Прогноз погоды -->
+            <div onclick="openForecastVisualizerModal()" 
+                 class="glass-panel p-5 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm hover:border-indigo-500 dark:hover:border-indigo-400 transition cursor-pointer relative overflow-hidden group">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <p class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Прогноз (<span id="val-city-name-card">Смолевичи</span>)</p>
+                        <div class="flex items-baseline space-x-2 mt-1">
+                            <h3 class="text-3xl font-extrabold tracking-tight">
+                                <span id="val-forecast-temp">10.0</span> <span class="text-xl font-normal text-slate-500">°C</span>
+                            </h3>
+                            <span class="text-xs text-slate-500 font-medium">мин: <span id="val-min-temp">6</span>° / макс: <span id="val-max-temp">14</span>°</span>
+                        </div>
+                    </div>
+                    <span class="p-3 rounded-xl bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 shadow-sm">
+                        <i class="fa-solid fa-cloud-sun-rain text-xl"></i>
+                    </span>
+                </div>
+                <div class="mt-4 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 pt-2.5 border-t border-slate-100 dark:border-slate-800">
+                    <span class="flex items-center gap-1"><i class="fa-solid fa-chart-line text-indigo-500"></i> Детали прогноза</span>
+                    <strong id="val-k-forecast" class="text-indigo-600 dark:text-indigo-400 font-bold text-xs">Доверие: 30%</strong>
+                </div>
+            </div>
+
+            <!-- 3. Расчетные уставки ПЗА (Calculated Outdoor & Target Flow) -->
+            <div class="glass-panel p-5 rounded-2xl border border-blue-200 dark:border-blue-800/80 shadow-md bg-gradient-to-br from-blue-500/10 via-indigo-500/5 to-transparent relative overflow-hidden">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <div class="flex items-center space-x-2">
+                            <p class="text-xs font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wider">Расчётная Улица & Подача</p>
+                            <span id="auto-status-pill" class="text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-500 text-white uppercase tracking-wider">АВТО-ОТПРАВКА</span>
+                        </div>
+                        <h3 class="text-2xl font-black mt-1 text-blue-700 dark:text-blue-300 tracking-tight">
+                            <span id="val-calc-temp">10.0</span> <span class="text-lg font-normal text-slate-500">°C (Улица)</span>
+                        </h3>
+                    </div>
+                    <span class="p-2.5 rounded-xl bg-blue-600 text-white shadow-lg shadow-blue-500/30">
+                        <i class="fa-solid fa-calculator text-lg"></i>
+                    </span>
+                </div>
+                <div class="mt-3 pt-2.5 border-t border-blue-200/50 dark:border-blue-800/50 space-y-1 text-xs">
+                    <div class="flex justify-between items-center">
+                        <span class="text-slate-600 dark:text-slate-300 font-semibold">C1 Радиаторы:</span>
+                        <strong id="val-target-c1" class="text-rose-600 dark:text-rose-400 font-extrabold text-sm">27.6 °C</strong>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-slate-600 dark:text-slate-300 font-semibold">C2/C3 Тёплый пол (макс 38°C):</span>
+                        <strong id="val-target-c23" class="text-emerald-600 dark:text-emerald-400 font-extrabold text-sm">22.5 °C</strong>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
+            <!-- График эквитермической кривой (2 колонки) -->
+            <div class="lg:col-span-2 glass-panel p-5 sm:p-6 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm flex flex-col">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800 gap-3">
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <h2 class="font-bold text-lg">Эквитермическая кривая отопления</h2>
+                            <span id="active-circuit-badge" class="px-2 py-0.5 rounded-full text-xs font-bold bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300">C1: Радиаторы</span>
+                        </div>
+                        <p class="text-xs text-slate-500 dark:text-slate-400">Зависимость температуры подачи от уличной температуры</p>
+                    </div>
+
+                    <div class="flex flex-wrap items-center gap-2">
+                        <!-- Выбор контура -->
+                        <div class="inline-flex rounded-xl bg-slate-200 dark:bg-slate-700/80 p-1 text-xs font-semibold">
+                            <button onclick="setActiveCircuit('C1')" id="circuit-c1-btn" class="px-3 py-1.5 rounded-lg bg-white dark:bg-slate-600 text-rose-600 dark:text-rose-300 shadow-sm transition">
+                                <i class="fa-solid fa-radiator mr-1"></i> C1 Радиаторы
+                            </button>
+                            <button onclick="setActiveCircuit('FLOOR')" id="circuit-floor-btn" class="px-3 py-1.5 rounded-lg text-slate-600 dark:text-slate-300 transition">
+                                <i class="fa-solid fa-border-all mr-1"></i> C2/C3 Тёплый пол
+                            </button>
+                        </div>
+
+                        <!-- Выбор режима -->
+                        <div class="inline-flex rounded-xl bg-slate-200 dark:bg-slate-700/80 p-1 text-xs font-semibold">
+                            <button onclick="setCurveMode('PARAMETRIC')" id="mode-param-btn" class="px-3 py-1.5 rounded-lg bg-white dark:bg-slate-600 text-blue-600 dark:text-blue-300 shadow-sm transition">
+                                Параметрический
+                            </button>
+                            <button onclick="setCurveMode('TABLE')" id="mode-table-btn" class="px-3 py-1.5 rounded-lg text-slate-600 dark:text-slate-300 transition">
+                                Таблица (2°C)
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="relative flex-1 w-full min-h-[340px] sm:min-h-[380px] my-4">
+                    <canvas id="pzaChart"></canvas>
+                </div>
+
+                <!-- Легенда и маркеры точек -->
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-3 border-t border-slate-100 dark:border-slate-800 text-xs">
+                    <div class="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/50 dark:border-slate-700/50 text-center">
+                        <span class="text-slate-400 block font-medium">Датчик (Факт)</span>
+                        <strong class="text-emerald-600 dark:text-emerald-400 text-sm font-bold" id="legend-fact">10.0°C</strong>
+                    </div>
+                    <div class="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/50 dark:border-slate-700/50 text-center">
+                        <span class="text-slate-400 block font-medium">Прогноз</span>
+                        <strong class="text-indigo-600 dark:text-indigo-400 text-sm font-bold" id="legend-forecast">10.0°C</strong>
+                    </div>
+                    <div class="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/50 dark:border-slate-700/50 text-center bg-blue-500/5">
+                        <span class="text-blue-500 block font-semibold">Рабочая точка (Расчёт)</span>
+                        <strong class="text-blue-600 dark:text-blue-300 text-sm font-extrabold" id="legend-working">10.0°C → 27.6°C</strong>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Панель настроек активной кривой -->
+            <div class="glass-panel p-5 sm:p-6 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm flex flex-col justify-between space-y-6">
+                <div>
+                    <div class="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
+                        <h2 class="font-bold text-base">Параметры <span id="param-panel-title">C1 Радиаторы</span></h2>
+                        <span class="text-xs font-mono px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500" id="current-mode-label">PARAMETRIC</span>
+                    </div>
+
+                    <div id="floor-limit-warning" class="hidden my-3 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs flex items-center space-x-2">
+                        <i class="fa-solid fa-shield-halved text-amber-500 text-base shrink-0"></i>
+                        <span>Ограничение температуры подачи в тёплый пол: <strong>38°C</strong>.</span>
+                    </div>
+
+                    <!-- 1. Параметрический режим -->
+                    <div id="parametric-controls" class="space-y-5 mt-4">
+                        <div>
+                            <div class="flex justify-between text-sm mb-1.5">
+                                <span class="font-medium text-slate-600 dark:text-slate-300">Наклон кривой (Slope / γ)</span>
+                                <span class="font-bold text-blue-600 dark:text-blue-400 font-mono text-base"><span id="val-slope">1.20</span></span>
+                            </div>
+                            <input type="range" min="0.1" max="3.0" step="0.05" value="1.2" id="input-slope" oninput="updateParametricFromInputs()" class="w-full accent-blue-600 cursor-pointer h-2 bg-slate-200 dark:bg-slate-700 rounded-lg">
+                            <div class="flex justify-between text-[10px] text-slate-400 mt-1.5 font-medium">
+                                <span>0.2 (Тёплый пол)</span>
+                                <span>1.2 (Стандарт)</span>
+                                <span>3.0 (Высокотемпер.)</span>
+                            </div>
+                        </div>
+
+                        <div>
+                            <div class="flex justify-between text-sm mb-1.5">
+                                <span class="font-medium text-slate-600 dark:text-slate-300">Параллельный сдвиг (Offset)</span>
+                                <span class="font-bold text-blue-600 dark:text-blue-400 font-mono text-base"><span id="val-offset">+0.0</span> °C</span>
+                            </div>
+                            <input type="range" min="-15.0" max="15.0" step="0.5" value="0.0" id="input-offset" oninput="updateParametricFromInputs()" class="w-full accent-blue-600 cursor-pointer h-2 bg-slate-200 dark:bg-slate-700 rounded-lg">
+                            <div class="flex justify-between text-[10px] text-slate-400 mt-1.5 font-medium">
+                                <span>-15.0°C</span>
+                                <span>0.0°C</span>
+                                <span>+15.0°C</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 2. Табличный режим -->
+                    <div id="table-controls" class="space-y-3 mt-4 hidden">
+                        <div class="flex items-center justify-between">
+                            <p class="text-xs font-semibold text-slate-600 dark:text-slate-300">Опорные точки (шаг 2°C):</p>
+                            <div class="flex items-center gap-1">
+                                <button onclick="fillTablePreset('default')" class="px-2 py-1 text-[10px] font-bold rounded bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 transition">Стандарт</button>
+                                <button onclick="smoothEntireTable()" class="px-2 py-1 text-[10px] font-bold rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 hover:bg-indigo-200 transition">Сгладить</button>
+                            </div>
+                        </div>
+
+                        <div class="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200/80 dark:border-slate-700/80 flex items-center justify-between">
+                            <div>
+                                <span class="text-xs font-bold text-slate-700 dark:text-slate-200 block">Плавная подтяжка</span>
+                                <span class="text-[10px] text-slate-400">Корректирует соседние точки при вводе</span>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" id="smooth-edit-toggle" checked class="sr-only peer">
+                                <div class="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                            </label>
+                        </div>
+
+                        <div id="table-points-container" class="space-y-1.5 max-h-[260px] overflow-y-auto pr-1"></div>
+                    </div>
+                </div>
+
+                <div class="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
+                    <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between">
+                        <div>
+                            <span class="text-xs font-bold text-slate-700 dark:text-slate-200 block">Авто-отправка уставок</span>
+                            <span class="text-[10px] text-slate-400" id="auto-publish-desc">Авто-публикация в MQTT при изменениях</span>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="panel-pza-toggle-chk" onchange="togglePzaAutomationFromCheckbox(this.checked)" class="sr-only peer" checked>
+                            <div class="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                        </label>
+                    </div>
+
+                    <button onclick="publishPzaSettingsManual()" class="w-full py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white font-bold shadow-lg shadow-blue-500/30 transition flex items-center justify-center space-x-2 cursor-pointer">
+                        <i class="fa-solid fa-paper-plane"></i>
+                        <span>Принудительно отправить уставки в MQTT</span>
+                    </button>
+                    <p class="text-[11px] text-center text-slate-400" id="pza-mode-notice">Режим: Авто-публикация активна</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
+            <!-- Левая колонка: Приоритеты источников, Гибрид и Профили -->
+            <div class="glass-panel p-5 sm:p-6 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm space-y-5">
+                <h3 class="font-bold text-base flex items-center space-x-2 pb-3 border-b border-slate-100 dark:border-slate-800">
+                    <i class="fa-solid fa-sliders text-blue-500"></i>
+                    <span>Приоритеты и Источники Улицы</span>
+                </h3>
+
+                <div class="space-y-2">
+                    <label class="text-xs font-semibold text-slate-500 dark:text-slate-400 block">Алгоритм расчета уличной T</label>
+                    <div class="grid grid-cols-3 gap-1.5">
+                        <button onclick="setSensorSource('SENSOR')" id="src-sensor" class="py-2 px-2 rounded-xl text-xs font-bold border transition bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700">
+                            Датчик
+                        </button>
+                        <button onclick="setSensorSource('HYBRID')" id="src-hybrid" class="py-2 px-2 rounded-xl text-xs font-bold border transition bg-blue-600 text-white border-blue-600 shadow-md">
+                            Гибрид
+                        </button>
+                        <button onclick="setSensorSource('FORECAST')" id="src-forecast" class="py-2 px-2 rounded-xl text-xs font-bold border transition bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700">
+                            Прогноз
+                        </button>
+                    </div>
+                </div>
+
+                <div id="hybrid-weight-box" class="p-3.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/60 space-y-2">
+                    <div class="flex justify-between items-center text-xs">
+                        <span class="font-bold text-indigo-900 dark:text-indigo-200">Степень доверия Прогнозу</span>
+                        <span class="font-extrabold font-mono text-indigo-600 dark:text-indigo-400 text-sm"><span id="val-hybrid-percent">30</span>%</span>
+                    </div>
+                    <input type="range" min="0" max="100" step="5" value="30" id="input-hybrid-trust" oninput="updateHybridTrustFromInput()" class="w-full accent-indigo-600 cursor-pointer h-2 bg-indigo-200 dark:bg-indigo-900 rounded-lg">
+                    <div class="flex justify-between text-[10px] text-slate-500 font-medium pt-0.5">
+                        <span>Датчик: <strong id="lbl-sensor-weight">70%</strong></span>
+                        <span>Прогноз: <strong id="lbl-forecast-weight">30%</strong></span>
+                    </div>
+                </div>
+
+                <div class="space-y-2 pt-1">
+                    <label class="text-xs font-semibold text-slate-500 dark:text-slate-400 block">Термальный профиль отопления</label>
+                    <div class="grid grid-cols-3 gap-2">
+                        <button onclick="setProfile('COMFORT')" id="prof-comfort" class="py-2 px-2.5 rounded-xl text-xs font-bold border transition bg-blue-600 text-white border-blue-600 shadow-md">
+                            Комфорт
+                        </button>
+                        <button onclick="setProfile('ECO')" id="prof-eco" class="py-2 px-2.5 rounded-xl text-xs font-bold border transition bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700">
+                            Эко (-3°C)
+                        </button>
+                        <button onclick="setProfile('VACATION')" id="prof-vacation" class="py-2 px-2.5 rounded-xl text-xs font-bold border transition bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700">
+                            Отпуск
+                        </button>
+                    </div>
+                </div>
+
+                <div class="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/50 dark:border-slate-700/50 space-y-3">
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs font-semibold text-slate-700 dark:text-slate-200">Ручной оверрайд улицы</span>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="manual-override-toggle" onchange="toggleManualOverride()" class="sr-only peer">
+                            <div class="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                        </label>
+                    </div>
+                    <div id="manual-temp-box" class="hidden pt-2 space-y-2 border-t border-slate-200/60 dark:border-slate-700/60">
+                        <div class="flex items-center justify-between text-xs">
+                            <span class="text-slate-500">Задать T улицы:</span>
+                            <span class="font-bold font-mono text-blue-600 dark:text-blue-400 text-sm"><span id="manual-temp-val">10.0</span>°C</span>
+                        </div>
+                        <input type="range" min="-25" max="25" step="0.5" value="10" id="manual-temp-slider" oninput="updateManualTempSlider()" class="w-full accent-blue-600 h-2 bg-slate-200 dark:bg-slate-700 rounded-lg">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Правая колонка: Публикации и Монитор Топиков -->
+            <div class="lg:col-span-2 glass-panel p-5 sm:p-6 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm space-y-4">
+                <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+                    <h3 class="font-bold text-base flex items-center space-x-2">
+                        <i class="fa-solid fa-network-wired text-emerald-500"></i>
+                        <span>Топики публикации и дистанционного управления</span>
+                    </h3>
+                    <button onclick="openTopicsModal()" class="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 text-xs font-bold transition">
+                        <i class="fa-solid fa-pen-to-square mr-1"></i> Настроить топики
+                    </button>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                    <div class="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/50 dark:border-slate-700/50 space-y-1">
+                        <div class="flex justify-between items-center">
+                            <span class="font-bold text-rose-500">Контур C1 (Радиаторы):</span>
+                            <span class="px-2 py-0.5 rounded bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300 font-mono text-[10px] font-bold">Радиаторы</span>
+                        </div>
+                        <p class="font-mono text-[11px] text-slate-600 dark:text-slate-300 truncate" id="topic-c1-preview">home/heating/circuits/c1/setpoint/set</p>
+                        <div class="flex justify-between pt-1 text-slate-400 text-[11px]">
+                            <span>Целевая подача:</span>
+                            <strong class="text-slate-700 dark:text-slate-200 font-bold" id="topic-c1-val">27.6 °C</strong>
+                        </div>
+                    </div>
+
+                    <div class="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/50 dark:border-slate-700/50 space-y-1">
+                        <div class="flex justify-between items-center">
+                            <span class="font-bold text-emerald-500">Контур C2 (Тёплый пол 1):</span>
+                            <span class="px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 font-mono text-[10px] font-bold">Тёплый пол 1</span>
+                        </div>
+                        <p class="font-mono text-[11px] text-slate-600 dark:text-slate-300 truncate" id="topic-c2-preview">home/heating/circuits/c2/setpoint/set</p>
+                        <div class="flex justify-between pt-1 text-slate-400 text-[11px]">
+                            <span>Целевая подача (макс 38°C):</span>
+                            <strong class="text-slate-700 dark:text-slate-200 font-bold" id="topic-c2-val">22.5 °C</strong>
+                        </div>
+                    </div>
+
+                    <div class="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/50 dark:border-slate-700/50 space-y-1">
+                        <div class="flex justify-between items-center">
+                            <span class="font-bold text-teal-500">Контур C3 (Тёплый пол 2):</span>
+                            <span class="px-2 py-0.5 rounded bg-teal-100 text-teal-700 dark:bg-teal-950 dark:text-teal-300 font-mono text-[10px] font-bold">Тёплый пол 2</span>
+                        </div>
+                        <p class="font-mono text-[11px] text-slate-600 dark:text-slate-300 truncate" id="topic-c3-preview">home/heating/circuits/c3/setpoint/set</p>
+                        <div class="flex justify-between pt-1 text-slate-400 text-[11px]">
+                            <span>Целевая подача (макс 38°C):</span>
+                            <strong class="text-slate-700 dark:text-slate-200 font-bold" id="topic-c3-val">22.5 °C</strong>
+                        </div>
+                    </div>
+
+                    <div class="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/50 dark:border-slate-700/50 space-y-1">
+                        <div class="flex justify-between items-center">
+                            <span class="font-bold text-blue-500">Датчик Улицы (Факт):</span>
+                            <span class="px-2 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 font-mono text-[10px] font-bold">Вход</span>
+                        </div>
+                        <p class="font-mono text-[11px] text-slate-600 dark:text-slate-300 truncate" id="topic-outdoor-preview">home/heating/sensors/outdoor_temp</p>
+                        <div class="flex justify-between pt-1 text-slate-400 text-[11px]">
+                            <span>Текущее значение:</span>
+                            <strong class="text-slate-700 dark:text-slate-200 font-bold" id="topic-outdoor-val">10.0 °C</strong>
+                        </div>
+                    </div>
+
+                    <div class="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/50 dark:border-slate-700/50 space-y-1 col-span-1 sm:col-span-2">
+                        <div class="flex justify-between items-center">
+                            <span class="font-bold text-amber-500">Дистанционное управление ПЗА (Вход / Выход):</span>
+                            <span id="pza-topic-status-badge" class="px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 font-mono text-[10px] font-bold">ВКЛЮЧЕНА</span>
+                        </div>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] font-mono mt-1">
+                            <div>
+                                <span class="text-slate-400">Топик Входа (Команда):</span>
+                                <p class="text-slate-700 dark:text-slate-200 truncate" id="topic-pza-cmd-preview">home/heating/pza/status/set</p>
+                            </div>
+                            <div>
+                                <span class="text-slate-400">Топик Выхода (Статус):</span>
+                                <p class="text-slate-700 dark:text-slate-200 truncate" id="topic-pza-status-preview">home/heating/pza/status</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- 1. МОДАЛЬНОЕ ОКНО ПРОГНОЗА ПОГОДЫ -->
+    <div id="forecastVisualizerModal" class="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 hidden">
+        <div class="glass-panel max-w-3xl w-full max-h-[90vh] rounded-3xl border border-slate-200 dark:border-slate-700 shadow-2xl flex flex-col overflow-hidden">
+            <div class="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-gradient-to-r from-indigo-500/10 via-blue-500/5 to-transparent">
+                <div class="flex items-center space-x-3">
+                    <div class="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-xl shadow-lg shadow-indigo-500/30">
+                        <i class="fa-solid fa-cloud-sun"></i>
+                    </div>
+                    <div>
+                        <h3 class="font-extrabold text-base sm:text-lg">Детальный Прогноз Погоды</h3>
+                        <p class="text-xs text-slate-500"><span id="forecast-modal-city">Смолевичи</span> • Open-Meteo & MQTT</p>
+                    </div>
+                </div>
+                <button onclick="closeForecastVisualizerModal()" class="w-9 h-9 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-500 hover:text-slate-900 dark:hover:text-white flex items-center justify-center transition">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <div class="flex border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 text-xs font-bold">
+                <button onclick="setForecastModalTab('VISUAL')" id="f-tab-vis" class="flex-1 py-3 border-b-2 border-indigo-600 text-indigo-600 dark:text-indigo-400">
+                    <i class="fa-solid fa-chart-line mr-1.5"></i> Прогноз
+                </button>
+                <button onclick="setForecastModalTab('TOPIC')" id="f-tab-topic" class="flex-1 py-3 text-slate-500 border-b-2 border-transparent">
+                    <i class="fa-solid fa-sliders mr-1.5"></i> Топик MQTT
+                </button>
+                <button onclick="setForecastModalTab('RAW')" id="f-tab-raw" class="flex-1 py-3 text-slate-500 border-b-2 border-transparent">
+                    <i class="fa-solid fa-code mr-1.5"></i> Сырой JSON
+                </button>
+            </div>
+
+            <div class="p-4 sm:p-6 overflow-y-auto space-y-5 flex-1">
+                <div id="f-content-vis" class="space-y-5">
+                    <div class="p-4 rounded-2xl bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-xl flex flex-wrap items-center justify-between gap-4">
+                        <div>
+                            <span class="text-xs uppercase tracking-wider text-indigo-200 font-semibold">Текущие метеоданные</span>
+                            <div class="flex items-baseline gap-2 mt-1">
+                                <span class="text-4xl font-extrabold" id="vis-curr-temp">10.0 °C</span>
+                                <span class="text-indigo-200 text-sm font-medium" id="vis-curr-desc">Облачно</span>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-4 text-xs">
+                            <div class="text-center">
+                                <span class="block text-indigo-200">Влажность</span>
+                                <strong id="vis-curr-humidity" class="text-base font-bold">78%</strong>
+                            </div>
+                            <div class="text-center">
+                                <span class="block text-indigo-200">Ветер</span>
+                                <strong id="vis-curr-wind" class="text-base font-bold">12 км/ч</strong>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Дневной прогноз</h4>
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3" id="daily-forecast-container"></div>
+                    </div>
+
+                    <div>
+                        <h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Почасовая температура</h4>
+                        <div class="flex space-x-2 overflow-x-auto pb-2" id="hourly-forecast-container"></div>
+                    </div>
+                </div>
+
+                <div id="f-content-topic" class="space-y-4 hidden">
+                    <div class="p-4 rounded-xl bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3">
+                        <label class="block text-xs font-bold text-slate-700 dark:text-slate-200">Топик прогноза погоды</label>
+                        <input type="text" id="cfg-forecast-topic-input" class="w-full p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono text-xs focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                    <button onclick="saveForecastTopicFromModal()" class="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition">
+                        Сохранить топик
+                    </button>
+                </div>
+
+                <div id="f-tab-raw-box" class="hidden">
+                    <pre id="forecast-json-code" class="p-4 rounded-xl bg-slate-950 text-emerald-400 font-mono text-xs overflow-x-auto max-h-[300px]">{}</pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. МОДАЛЬНОЕ ОКНО НАСТРОЙКИ ТОПИКОВ MQTT -->
+    <div id="topicsConfigModal" class="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 hidden">
+        <div class="glass-panel max-w-lg w-full rounded-3xl border border-slate-200 dark:border-slate-700 shadow-2xl p-5 sm:p-6 space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+                <h3 class="font-extrabold text-base flex items-center gap-2">
+                    <i class="fa-solid fa-sliders text-blue-500"></i> Конфигурация MQTT Топиков
+                </h3>
+                <button onclick="closeTopicsModal()" class="w-8 h-8 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-500 flex items-center justify-center">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <div class="space-y-3 text-xs">
+                <div>
+                    <label class="block font-bold text-slate-700 dark:text-slate-300 mb-1">Топик уличного датчика (Факт):</label>
+                    <input type="text" id="input-topic-outdoor" class="w-full p-2.5 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono">
+                </div>
+
+                <div>
+                    <label class="block font-bold text-slate-700 dark:text-slate-300 mb-1">Топик прогноза погоды (JSON):</label>
+                    <input type="text" id="input-topic-forecast" class="w-full p-2.5 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono">
+                </div>
+
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <label class="block font-bold text-slate-700 dark:text-slate-300 mb-1">ПЗА Топик Входа (Команда):</label>
+                        <input type="text" id="input-topic-pza-cmd" class="w-full p-2.5 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono">
+                    </div>
+                    <div>
+                        <label class="block font-bold text-slate-700 dark:text-slate-300 mb-1">ПЗА Топик Выхода (Статус):</label>
+                        <input type="text" id="input-topic-pza-status" class="w-full p-2.5 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block font-bold text-rose-600 dark:text-rose-400 mb-1">Контур C1 (Радиаторы) - Уставка:</label>
+                    <input type="text" id="input-topic-c1" class="w-full p-2.5 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono">
+                </div>
+
+                <div>
+                    <label class="block font-bold text-emerald-600 dark:text-emerald-400 mb-1">Контур C2 (Тёплый пол 1) - Уставка:</label>
+                    <input type="text" id="input-topic-c2" class="w-full p-2.5 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono">
+                </div>
+
+                <div>
+                    <label class="block font-bold text-teal-600 dark:text-teal-400 mb-1">Контур C3 (Тёплый пол 2) - Уставка:</label>
+                    <input type="text" id="input-topic-c3" class="w-full p-2.5 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono">
+                </div>
+            </div>
+
+            <div class="pt-3 border-t border-slate-200 dark:border-slate-800 flex gap-2">
+                <button onclick="saveTopicsConfig()" class="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition text-xs">
+                    Сохранить изменения
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. МОДАЛЬНОЕ ОКНО ВЫБОРА ЛОКАЦИИ -->
+    <div id="locationModal" class="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 hidden">
+        <div class="glass-panel max-w-md w-full rounded-3xl border border-slate-200 dark:border-slate-700 shadow-2xl p-5 sm:p-6 space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+                <h3 class="font-extrabold text-base flex items-center gap-2">
+                    <i class="fa-solid fa-location-dot text-rose-500"></i> Выбор города для погоды
+                </h3>
+                <button onclick="closeLocationModal()" class="w-8 h-8 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-500 flex items-center justify-center">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <div class="space-y-3">
+                <div class="relative">
+                    <input type="text" id="location-search-input" onkeyup="searchCityDebounce()" placeholder="Введите название города (например, Смолевичи, Минск...)" class="w-full p-3 pl-10 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs">
+                    <i class="fa-solid fa-magnifying-glass absolute left-3.5 top-3.5 text-slate-400 text-xs"></i>
+                </div>
+
+                <div id="city-search-results" class="max-h-48 overflow-y-auto space-y-1 divide-y divide-slate-100 dark:divide-slate-800"></div>
+
+                <div class="pt-2">
+                    <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">Популярные города:</p>
+                    <div class="flex flex-wrap gap-1.5">
+                        <button onclick="selectPresetCity('Смолевичи', 54.029, 28.088)" class="px-2.5 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-blue-500 hover:text-white transition text-xs font-medium">Смолевичи</button>
+                        <button onclick="selectPresetCity('Минск', 53.900, 27.566)" class="px-2.5 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-blue-500 hover:text-white transition text-xs font-medium">Минск</button>
+                        <button onclick="selectPresetCity('Брест', 52.097, 23.734)" class="px-2.5 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-blue-500 hover:text-white transition text-xs font-medium">Брест</button>
+                        <button onclick="selectPresetCity('Гродно', 53.688, 23.825)" class="px-2.5 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-blue-500 hover:text-white transition text-xs font-medium">Гродно</button>
+                        <button onclick="selectPresetCity('Витебск', 55.190, 30.204)" class="px-2.5 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-blue-500 hover:text-white transition text-xs font-medium">Витебск</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 4. МОДАЛЬНОЕ ОКНО НАСТРОЕК MQTT БРОКЕРА -->
+    <div id="mqttConfigModal" class="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 hidden">
+        <div class="glass-panel max-w-md w-full rounded-3xl border border-slate-200 dark:border-slate-700 shadow-2xl p-5 sm:p-6 space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+                <h3 class="font-extrabold text-base flex items-center gap-2">
+                    <i class="fa-solid fa-server text-amber-500"></i> Параметры MQTT Брокера
+                </h3>
+                <button onclick="closeConfigModal()" class="w-8 h-8 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-500 flex items-center justify-center">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <div class="space-y-3 text-xs">
+                <div class="grid grid-cols-3 gap-2">
+                    <div class="col-span-2">
+                        <label class="block font-bold text-slate-700 dark:text-slate-300 mb-1">Хост (Host / IP):</label>
+                        <input type="text" id="mqtt-host" class="w-full p-2.5 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono">
+                    </div>
+                    <div>
+                        <label class="block font-bold text-slate-700 dark:text-slate-300 mb-1">Порт (WS):</label>
+                        <input type="number" id="mqtt-port" class="w-full p-2.5 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block font-bold text-slate-700 dark:text-slate-300 mb-1">WebSocket Path:</label>
+                    <input type="text" id="mqtt-path" value="/mqtt" class="w-full p-2.5 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono">
+                </div>
+
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <label class="block font-bold text-slate-700 dark:text-slate-300 mb-1">Логин:</label>
+                        <input type="text" id="mqtt-user" class="w-full p-2.5 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono">
+                    </div>
+                    <div>
+                        <label class="block font-bold text-slate-700 dark:text-slate-300 mb-1">Пароль:</label>
+                        <input type="password" id="mqtt-pass" class="w-full p-2.5 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block font-bold text-slate-700 dark:text-slate-300 mb-1">Client ID:</label>
+                    <input type="text" id="mqtt-clientid" class="w-full p-2.5 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono">
+                </div>
+
+                <div class="flex items-center space-x-2 pt-1">
+                    <input type="checkbox" id="mqtt-ssl" class="rounded text-blue-600 focus:ring-blue-500 h-4 w-4">
+                    <label for="mqtt-ssl" class="font-bold text-slate-700 dark:text-slate-300">Использовать SSL/TLS (wss://)</label>
+                </div>
+            </div>
+
+            <div class="pt-3 border-t border-slate-200 dark:border-slate-800 flex gap-2">
+                <button onclick="saveMqttConfig()" class="flex-1 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl transition text-xs">
+                    Переподключиться
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const STORAGE_KEY = 'pza_system_settings_v3';
+
+        // Глобальное состояние системы
+        let state = {
+            pzaEnabled: true,
+            autoPublish: true,
+            activeCircuit: 'C1', // 'C1' or 'FLOOR'
+            curveMode: 'PARAMETRIC', // 'PARAMETRIC' or 'TABLE'
+            sensorSource: 'HYBRID', // 'SENSOR', 'HYBRID', 'FORECAST'
+            hybridForecastWeight: 30, // 30% Forecast, 70% Sensor
+            profile: 'COMFORT', // 'COMFORT' (0), 'ECO' (-3), 'VACATION' (-8)
+            
+            // Температуры
+            outdoorSensorTemp: 10.0,
+            forecastTemp: 10.0,
+            manualTemp: 10.0,
+            manualOverride: false,
+
+            // Локация
+            city: { name: 'г. Смолевичи', lat: 54.029, lon: 28.088 },
+
+            // Параметры кривой C1 (Радиаторы)
+            c1Params: {
+                slope: 1.20,
+                offset: 0.0,
+                table: Array(21).fill(0).map((_, i) => {
+                    const tOut = -20 + i * 2;
+                    return Math.min(80, Math.round(20 + 1.2 * Math.pow(Math.max(0, 20 - tOut), 0.8)));
+                })
+            },
+
+            // Параметры кривой FLOOR (Тёплый пол C2/C3)
+            floorParams: {
+                slope: 0.40,
+                offset: 0.0,
+                table: Array(21).fill(0).map((_, i) => {
+                    const tOut = -20 + i * 2;
+                    return Math.min(38, Math.round(20 + 0.4 * Math.pow(Math.max(0, 20 - tOut), 0.8)));
+                })
+            },
+
+            // Топики MQTT
+            topics: {
+                outdoorSensor: 'home/heating/sensors/outdoor_temp',
+                forecast: 'home/heating/sensors/weather_forecast',
+                pzaCmd: 'home/heating/pza/status/set',
+                pzaStatus: 'home/heating/pza/status',
+                c1Setpoint: 'home/heating/circuits/c1/setpoint/set',
+                c2Setpoint: 'home/heating/circuits/c2/setpoint/set',
+                c3Setpoint: 'home/heating/circuits/c3/setpoint/set'
+            },
+
+            // Брокер MQTT
+            broker: {
+                host: window.location.hostname || 'localhost',
+                port: 9001,
+                path: '/mqtt',
+                user: '',
+                pass: '',
+                clientId: 'pza_web_' + Math.random().toString(16).substr(2, 6),
+                ssl: false
+            },
+
+            forecastData: null
+        };
+
+        let mqttClient = null;
+        let chartInstance = null;
+        let citySearchTimer = null;
+
+        
+        /**
+         * КЛЮЧЕВАЯ ФУНКЦИЯ РАСЧЕТА УЛИЧНОЙ ТЕМПЕРАТУРЫ
+         * Ранее тут могла возникать ошибка вычисления 23°C вместо 10°C из-за смешивания
+         * базовой целевой комнатной температуры с уличной. Теперь строго возвращается T улицы!
+         */
+        function getCalculatedOutdoorTemp() {
+            if (state.manualOverride) {
+                return parseFloat(state.manualTemp);
+            }
+
+            const sensor = (state.outdoorSensorTemp !== null && !isNaN(state.outdoorSensorTemp)) ? parseFloat(state.outdoorSensorTemp) : null;
+            const forecast = (state.forecastTemp !== null && !isNaN(state.forecastTemp)) ? parseFloat(state.forecastTemp) : null;
+
+            if (sensor === null && forecast === null) return 0.0;
+            if (sensor === null) return forecast;
+            if (forecast === null) return sensor;
+
+            if (state.sensorSource === 'SENSOR') {
+                return sensor;
+            } else if (state.sensorSource === 'FORECAST') {
+                return forecast;
+            } else if (state.sensorSource === 'HYBRID') {
+                const wForecast = (parseFloat(state.hybridForecastWeight) || 30) / 100.0;
+                const wSensor = 1.0 - wForecast;
+                return parseFloat(((sensor * wSensor) + (forecast * wForecast)).toFixed(1));
+            }
+            return sensor;
+        }
+
+        /**
+         * Сдвиг по профилю
+         */
+        function getProfileShift() {
+            if (state.profile === 'ECO') return -3.0;
+            if (state.profile === 'VACATION') return -8.0;
+            return 0.0; // COMFORT
+        }
+
+        /**
+         * Расчет температуры подачи для заданного значения уличной температуры и настроек
+         */
+        function calculateTargetFlowTemp(outdoorTemp, circuitType, overrideParams = null) {
+            const isFloor = (circuitType === 'FLOOR');
+            const params = overrideParams || (isFloor ? state.floorParams : state.c1Params);
+            const mode = state.curveMode;
+            const tRoomTarget = 20.0; // Комнатный ориентир
+            const profileShift = getProfileShift();
+
+            let targetFlow = tRoomTarget;
+
+            if (mode === 'PARAMETRIC') {
+                const deltaT = Math.max(0, tRoomTarget - outdoorTemp);
+                const slope = parseFloat(params.slope) || (isFloor ? 0.4 : 1.2);
+                const offset = parseFloat(params.offset) || 0.0;
+
+                // Стандартная формулировка Heating Curve: Tflow = Troom + Slope * (Troom - Tout)^0.8 + Offset
+                targetFlow = tRoomTarget + slope * Math.pow(deltaT, 0.8) + offset + profileShift;
+            } else {
+                // Табличный режим - интерполяция от -20°C до +20°C (21 точка с шагом 2°C)
+                const clampedOut = Math.max(-20, Math.min(20, outdoorTemp));
+                const indexFloat = (clampedOut - (-20)) / 2.0;
+                const idxLow = Math.floor(indexFloat);
+                const idxHigh = Math.min(20, Math.ceil(indexFloat));
+                const frac = indexFloat - idxLow;
+
+                const valLow = params.table[idxLow] !== undefined ? params.table[idxLow] : 40;
+                const valHigh = params.table[idxHigh] !== undefined ? params.table[idxHigh] : 40;
+
+                targetFlow = valLow + (valHigh - valLow) * frac + profileShift;
+            }
+
+            // Защитное ограничение 38°C для тёплого пола
+            if (isFloor) {
+                targetFlow = Math.min(38.0, targetFlow);
+            }
+
+            return parseFloat(Math.max(15.0, Math.min(85.0, targetFlow)).toFixed(1));
+        }
+
+        function updateUI() {
+            const calcOut = getCalculatedOutdoorTemp();
+
+            // 1. Обновляем плашки температур
+            document.getElementById('val-outdoor-temp').innerText = (state.outdoorSensorTemp !== null) ? state.outdoorSensorTemp.toFixed(1) : '--.-';
+            document.getElementById('val-forecast-temp').innerText = (state.forecastTemp !== null) ? state.forecastTemp.toFixed(1) : '--.-';
+            document.getElementById('val-calc-temp').innerText = calcOut.toFixed(1);
+
+            // 2. Рассчитываем и обновляем итоговые уставки подачи
+            const targetC1 = calculateTargetFlowTemp(calcOut, 'C1');
+            const targetC23 = calculateTargetFlowTemp(calcOut, 'FLOOR');
+
+            document.getElementById('val-target-c1').innerText = targetC1.toFixed(1) + ' °C';
+            document.getElementById('val-target-c23').innerText = targetC23.toFixed(1) + ' °C';
+
+            document.getElementById('topic-c1-val').innerText = targetC1.toFixed(1) + ' °C';
+            document.getElementById('topic-c2-val').innerText = targetC23.toFixed(1) + ' °C';
+            document.getElementById('topic-c3-val').innerText = targetC23.toFixed(1) + ' °C';
+            document.getElementById('topic-outdoor-val').innerText = (state.outdoorSensorTemp !== null) ? state.outdoorSensorTemp.toFixed(1) + ' °C' : '--.- °C';
+
+            // 3. Легенда графика
+            document.getElementById('legend-fact').innerText = (state.outdoorSensorTemp !== null) ? `${state.outdoorSensorTemp.toFixed(1)}°C` : '--';
+            document.getElementById('legend-forecast').innerText = (state.forecastTemp !== null) ? `${state.forecastTemp.toFixed(1)}°C` : '--';
+            
+            const activeTarget = (state.activeCircuit === 'FLOOR') ? targetC23 : targetC1;
+            document.getElementById('legend-working').innerText = `${calcOut.toFixed(1)}°C → ${activeTarget.toFixed(1)}°C`;
+
+            // 4. Оверрайд плашка
+            const overrideBadge = document.getElementById('override-badge');
+            if (state.manualOverride) {
+                overrideBadge.classList.remove('hidden');
+            } else {
+                overrideBadge.classList.add('hidden');
+            }
+
+            // 5. Переключатели контура
+            const isFloor = (state.activeCircuit === 'FLOOR');
+            document.getElementById('active-circuit-badge').innerText = isFloor ? 'C2/C3: Тёплый пол' : 'C1: Радиаторы';
+            document.getElementById('param-panel-title').innerText = isFloor ? 'C2/C3 Тёплый пол' : 'C1 Радиаторы';
+            
+            if (isFloor) {
+                document.getElementById('circuit-floor-btn').className = "px-3 py-1.5 rounded-lg bg-white dark:bg-slate-600 text-emerald-600 dark:text-emerald-300 shadow-sm transition";
+                document.getElementById('circuit-c1-btn').className = "px-3 py-1.5 rounded-lg text-slate-600 dark:text-slate-300 transition";
+                document.getElementById('floor-limit-warning').classList.remove('hidden');
+            } else {
+                document.getElementById('circuit-c1-btn').className = "px-3 py-1.5 rounded-lg bg-white dark:bg-slate-600 text-rose-600 dark:text-rose-300 shadow-sm transition";
+                document.getElementById('circuit-floor-btn').className = "px-3 py-1.5 rounded-lg text-slate-600 dark:text-slate-300 transition";
+                document.getElementById('floor-limit-warning').classList.add('hidden');
+            }
+
+            // 6. Переключатели режима (Параметрический vs Табличный)
+            const isParam = (state.curveMode === 'PARAMETRIC');
+            document.getElementById('current-mode-label').innerText = state.curveMode;
+            if (isParam) {
+                document.getElementById('mode-param-btn').className = "px-3 py-1.5 rounded-lg bg-white dark:bg-slate-600 text-blue-600 dark:text-blue-300 shadow-sm transition";
+                document.getElementById('mode-table-btn').className = "px-3 py-1.5 rounded-lg text-slate-600 dark:text-slate-300 transition";
+                document.getElementById('parametric-controls').classList.remove('hidden');
+                document.getElementById('table-controls').classList.add('hidden');
+            } else {
+                document.getElementById('mode-table-btn').className = "px-3 py-1.5 rounded-lg bg-white dark:bg-slate-600 text-blue-600 dark:text-blue-300 shadow-sm transition";
+                document.getElementById('mode-param-btn').className = "px-3 py-1.5 rounded-lg text-slate-600 dark:text-slate-300 transition";
+                document.getElementById('parametric-controls').classList.add('hidden');
+                document.getElementById('table-controls').classList.remove('hidden');
+                renderTableInputs();
+            }
+
+            // 7. Слайдеры параметров
+            const activeParams = isFloor ? state.floorParams : state.c1Params;
+            document.getElementById('input-slope').value = activeParams.slope;
+            document.getElementById('val-slope').innerText = parseFloat(activeParams.slope).toFixed(2);
+            document.getElementById('input-offset').value = activeParams.offset;
+            document.getElementById('val-offset').innerText = (activeParams.offset >= 0 ? '+' : '') + parseFloat(activeParams.offset).toFixed(1);
+
+            // 8. Кнопки источников
+            ['sensor', 'hybrid', 'forecast'].forEach(src => {
+                const btn = document.getElementById(`src-${src}`);
+                if (state.sensorSource.toLowerCase() === src) {
+                    btn.className = "py-2 px-2 rounded-xl text-xs font-bold border transition bg-blue-600 text-white border-blue-600 shadow-md";
+                } else {
+                    btn.className = "py-2 px-2 rounded-xl text-xs font-bold border transition bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700";
+                }
+            });
+
+            // 9. Гибрид вес
+            document.getElementById('val-hybrid-percent').innerText = state.hybridForecastWeight;
+            document.getElementById('input-hybrid-trust').value = state.hybridForecastWeight;
+            document.getElementById('val-k-forecast').innerText = `Доверие: ${state.hybridForecastWeight}%`;
+            document.getElementById('lbl-forecast-weight').innerText = `${state.hybridForecastWeight}%`;
+            document.getElementById('lbl-sensor-weight').innerText = `${100 - state.hybridForecastWeight}%`;
+
+            // 10. Кнопки профилей
+            ['comfort', 'eco', 'vacation'].forEach(prof => {
+                const btn = document.getElementById(`prof-${prof}`);
+                if (state.profile.toLowerCase() === prof) {
+                    btn.className = "py-2 px-2.5 rounded-xl text-xs font-bold border transition bg-blue-600 text-white border-blue-600 shadow-md";
+                } else {
+                    btn.className = "py-2 px-2.5 rounded-xl text-xs font-bold border transition bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700";
+                }
+            });
+
+            // 11. Топики предпросмотра
+            document.getElementById('topic-c1-preview').innerText = state.topics.c1Setpoint;
+            document.getElementById('topic-c2-preview').innerText = state.topics.c2Setpoint;
+            document.getElementById('topic-c3-preview').innerText = state.topics.c3Setpoint;
+            document.getElementById('topic-outdoor-preview').innerText = state.topics.outdoorSensor;
+            document.getElementById('sensor-topic-display').innerText = state.topics.outdoorSensor;
+            document.getElementById('topic-pza-cmd-preview').innerText = state.topics.pzaCmd;
+            document.getElementById('topic-pza-status-preview').innerText = state.topics.pzaStatus;
+
+            // 12. Переключатели ПЗА
+            updatePzaStateVisuals();
+
+            // 13. Обновление графика Chart.js
+            updateChart();
+
+            // 14. Авто-публикация при изменении уставок (если включена)
+            if (state.pzaEnabled && state.autoPublish) {
+                publishPzaSetpointsDebounced();
+            }
+        }
+
+        
+        /**
+         * Главная функция переключения состояния ПЗА (ВКЛ / ВЫКЛ)
+         * Вызывается как локально из UI, так и из входящего MQTT топика управления.
+         */
+        function setPzaState(enabled, publishMqtt = true) {
+            state.pzaEnabled = Boolean(enabled);
+
+            updatePzaStateVisuals();
+
+            if (publishMqtt && mqttClient && mqttClient.connected) {
+                const payload = state.pzaEnabled ? "ON" : "OFF";
+                mqttClient.publish(state.topics.pzaStatus, payload, { retain: true, qos: 1 });
+                mqttClient.publish(state.topics.pzaCmd, payload, { retain: false, qos: 1 });
+            }
+
+            if (state.pzaEnabled) {
+                showToast(`ПЗА автоматика ВКЛЮЧЕНА`, 'success');
+                if (state.autoPublish) {
+                    publishPzaSetpointsImmediate();
+                }
+            } else {
+                showToast(`ПЗА автоматика ВЫКЛЮЧЕНА`, 'warning');
+            }
+
+            saveStateToStorage();
+        }
+
+        function togglePzaStateFromUI() {
+            setPzaState(!state.pzaEnabled, true);
+        }
+
+        function togglePzaAutomationFromCheckbox(checked) {
+            state.autoPublish = checked;
+            document.getElementById('pza-mode-notice').innerText = state.autoPublish ? "Режим: Авто-публикация активна" : "Режим: Ручная отправка уставок";
+            document.getElementById('auto-status-pill').innerText = state.autoPublish ? "АВТО-ОТПРАВКА" : "РУЧНОЙ РЕЖИМ";
+            document.getElementById('auto-status-pill').className = state.autoPublish ? 
+                "text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-500 text-white uppercase tracking-wider" : 
+                "text-[9px] font-black px-1.5 py-0.5 rounded bg-slate-400 text-white uppercase tracking-wider";
+            saveStateToStorage();
+        }
+
+        function updatePzaStateVisuals() {
+            const toggleBtn = document.getElementById('pza-main-toggle-btn');
+            const toggleIcon = document.getElementById('pza-toggle-icon');
+            const toggleLabel = document.getElementById('pza-toggle-label');
+            const statusBadge = document.getElementById('pza-topic-status-badge');
+            const chk = document.getElementById('panel-pza-toggle-chk');
+
+            if (state.pzaEnabled) {
+                toggleBtn.className = "px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all flex items-center space-x-1.5 shadow-sm bg-emerald-600 text-white glow-emerald cursor-pointer";
+                toggleIcon.className = "fa-solid fa-bolt text-amber-300 animate-pulse";
+                toggleLabel.innerText = "ПЗА: ВКЛ";
+                statusBadge.className = "px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 font-mono text-[10px] font-bold";
+                statusBadge.innerText = "ВКЛЮЧЕНА";
+            } else {
+                toggleBtn.className = "px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all flex items-center space-x-1.5 shadow-sm bg-rose-600 text-white glow-rose cursor-pointer";
+                toggleIcon.className = "fa-solid fa-power-off text-rose-200";
+                toggleLabel.innerText = "ПЗА: ВЫКЛ";
+                statusBadge.className = "px-2 py-0.5 rounded bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300 font-mono text-[10px] font-bold";
+                statusBadge.innerText = "ВЫКЛЮЧЕНА";
+            }
+        }
+
+        function initChart() {
+            const ctx = document.getElementById('pzaChart').getContext('2d');
+            
+            chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'Эквитермическая кривая (°C)',
+                            data: [],
+                            borderColor: '#3b82f6',
+                            backgroundColor: 'rgba(59, 130, 246, 0.08)',
+                            fill: true,
+                            tension: 0.35,
+                            borderWidth: 3,
+                            pointRadius: 2,
+                            pointHoverRadius: 6
+                        },
+                        {
+                            label: 'Рабочая точка (Расчёт)',
+                            data: [],
+                            borderColor: '#ef4444',
+                            backgroundColor: '#ef4444',
+                            pointRadius: 7,
+                            pointHoverRadius: 9,
+                            showLine: false
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { intersect: false, mode: 'index' },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return ` Подача: ${context.raw}°C`;
+                                },
+                                title: function(context) {
+                                    return `Улица: ${context[0].label}°C`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            title: { display: true, text: 'Уличная температура (°C)', color: '#94a3b8' },
+                            grid: { color: 'rgba(148, 163, 184, 0.1)' }
+                        },
+                        y: {
+                            title: { display: true, text: 'Температура подачи (°C)', color: '#94a3b8' },
+                            min: 15,
+                            max: 85,
+                            grid: { color: 'rgba(148, 163, 184, 0.1)' }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateChart() {
+            if (!chartInstance) return;
+
+            const isFloor = (state.activeCircuit === 'FLOOR');
+            const labels = [];
+            const curvePoints = [];
+
+            for (let t = -25; t <= 20; t += 1) {
+                labels.push(t.toString());
+                curvePoints.push(calculateTargetFlowTemp(t, state.activeCircuit));
+            }
+
+            const calcOut = getCalculatedOutdoorTemp();
+            const activeTarget = calculateTargetFlowTemp(calcOut, state.activeCircuit);
+
+            // Формируем датасет для единичной рабочей точки
+            const workingPointData = labels.map(lbl => {
+                const val = parseFloat(lbl);
+                if (Math.abs(val - Math.round(calcOut)) < 0.6) {
+                    return activeTarget;
+                }
+                return null;
+            });
+
+            chartInstance.data.labels = labels;
+            chartInstance.data.datasets[0].data = curvePoints;
+            chartInstance.data.datasets[0].borderColor = isFloor ? '#10b981' : '#ef4444';
+            chartInstance.data.datasets[0].backgroundColor = isFloor ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)';
+            chartInstance.data.datasets[1].data = workingPointData;
+
+            chartInstance.options.scales.y.max = isFloor ? 45 : 85;
+
+            chartInstance.update();
+        }
+
+        function renderTableInputs() {
+            const container = document.getElementById('table-points-container');
+            if (!container) return;
+
+            const isFloor = (state.activeCircuit === 'FLOOR');
+            const params = isFloor ? state.floorParams : state.c1Params;
+
+            let html = '';
+            for (let i = 0; i < 21; i++) {
+                const tOut = -20 + i * 2;
+                const val = params.table[i] !== undefined ? params.table[i] : 40;
+                html += `
+                    <div class="flex items-center justify-between p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200/50 dark:border-slate-700/50 text-xs">
+                        <span class="font-mono text-slate-500 w-20">${tOut >= 0 ? '+' : ''}${tOut}°C улица:</span>
+                        <div class="flex items-center space-x-1">
+                            <input type="number" min="15" max="${isFloor ? 38 : 85}" value="${val}" 
+                                   onchange="onTablePointChange(${i}, this.value)" 
+                                   class="w-16 p-1 rounded bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono text-center font-bold text-blue-600 dark:text-blue-400">
+                            <span class="text-slate-400">°C</span>
+                        </div>
+                    </div>
+                `;
+            }
+            container.innerHTML = html;
+        }
+
+        function onTablePointChange(index, newVal) {
+            const isFloor = (state.activeCircuit === 'FLOOR');
+            const params = isFloor ? state.floorParams : state.c1Params;
+            const maxAllowed = isFloor ? 38 : 85;
+            let num = Math.max(15, Math.min(maxAllowed, parseInt(newVal) || 20));
+
+            params.table[index] = num;
+
+            const smoothChecked = document.getElementById('smooth-edit-toggle')?.checked;
+            if (smoothChecked) {
+                // Плавная подтяжка соседних точек
+                if (index > 0 && params.table[index - 1] < num) {
+                    params.table[index - 1] = Math.min(maxAllowed, Math.round((num + params.table[index - 1]) / 2));
+                }
+                if (index < 20 && params.table[index + 1] > num) {
+                    params.table[index + 1] = Math.max(15, Math.round((num + params.table[index + 1]) / 2));
+                }
+            }
+
+            saveStateToStorage();
+            updateUI();
+        }
+
+        function fillTablePreset(type) {
+            const isFloor = (state.activeCircuit === 'FLOOR');
+            const params = isFloor ? state.floorParams : state.c1Params;
+            const slope = isFloor ? 0.4 : 1.2;
+
+            for (let i = 0; i < 21; i++) {
+                const tOut = -20 + i * 2;
+                params.table[i] = Math.min(isFloor ? 38 : 80, Math.round(20 + slope * Math.pow(Math.max(0, 20 - tOut), 0.8)));
+            }
+
+            saveStateToStorage();
+            updateUI();
+            showToast('Заполнены стандартные опорные значения', 'info');
+        }
+
+        function smoothEntireTable() {
+            const isFloor = (state.activeCircuit === 'FLOOR');
+            const params = isFloor ? state.floorParams : state.c1Params;
+
+            for (let i = 1; i < 20; i++) {
+                params.table[i] = Math.round((params.table[i - 1] + params.table[i] * 2 + params.table[i + 1]) / 4);
+            }
+
+            saveStateToStorage();
+            updateUI();
+            showToast('Таблица сглажена', 'info');
+        }
+
+        function setActiveCircuit(circuit) {
+            state.activeCircuit = circuit;
+            saveStateToStorage();
+            updateUI();
+        }
+
+        function setCurveMode(mode) {
+            state.curveMode = mode;
+            saveStateToStorage();
+            updateUI();
+        }
+
+        function updateParametricFromInputs() {
+            const isFloor = (state.activeCircuit === 'FLOOR');
+            const params = isFloor ? state.floorParams : state.c1Params;
+
+            params.slope = parseFloat(document.getElementById('input-slope').value) || 1.2;
+            params.offset = parseFloat(document.getElementById('input-offset').value) || 0.0;
+
+            saveStateToStorage();
+            updateUI();
+        }
+
+        function setSensorSource(src) {
+            state.sensorSource = src;
+            saveStateToStorage();
+            updateUI();
+            showToast(`Источник улицы: ${src}`, 'info');
+        }
+
+        function updateHybridTrustFromInput() {
+            state.hybridForecastWeight = parseInt(document.getElementById('input-hybrid-trust').value) || 30;
+            saveStateToStorage();
+            updateUI();
+        }
+
+        function setProfile(prof) {
+            state.profile = prof;
+            saveStateToStorage();
+            updateUI();
+            showToast(`Профиль: ${prof}`, 'info');
+        }
+
+        function toggleManualOverride() {
+            state.manualOverride = document.getElementById('manual-override-toggle').checked;
+            document.getElementById('manual-temp-box').classList.toggle('hidden', !state.manualOverride);
+            saveStateToStorage();
+            updateUI();
+        }
+
+        function updateManualTempSlider() {
+            state.manualTemp = parseFloat(document.getElementById('manual-temp-slider').value) || 0.0;
+            document.getElementById('manual-temp-val').innerText = state.manualTemp.toFixed(1);
+            saveStateToStorage();
+            updateUI();
+        }
+
+        function initMqtt() {
+            if (mqttClient) {
+                try { mqttClient.end(true); } catch(e) {}
+            }
+
+            const protocol = state.broker.ssl ? 'wss' : 'ws';
+            const url = `${protocol}://${state.broker.host}:${state.broker.port}${state.broker.path}`;
+
+            const options = {
+                clientId: state.broker.clientId,
+                clean: true,
+                connectTimeout: 5000,
+                reconnectPeriod: 4000
+            };
+
+            if (state.broker.user) options.username = state.broker.user;
+            if (state.broker.pass) options.password = state.broker.pass;
+
+            updateMqttStatusBadge('connecting', 'Подключение...');
+
+            try {
+                mqttClient = mqtt.connect(url, options);
+
+                mqttClient.on('connect', () => {
+                    updateMqttStatusBadge('connected', 'Подключен');
+                    showToast('Успешное подключение к MQTT Брокеру', 'success');
+
+                    // Подписка на топики
+                    mqttClient.subscribe(state.topics.outdoorSensor, { qos: 0 });
+                    mqttClient.subscribe(state.topics.forecast, { qos: 0 });
+                    mqttClient.subscribe(state.topics.pzaCmd, { qos: 1 });
+                    mqttClient.subscribe(state.topics.pzaStatus, { qos: 1 });
+                });
+
+                mqttClient.on('message', (topic, payload) => {
+                    const payloadStr = payload.toString();
+                    handleIncomingMqttMessage(topic, payloadStr);
+                });
+
+                mqttClient.on('error', (err) => {
+                    updateMqttStatusBadge('disconnected', 'Ошибка');
+                });
+
+                mqttClient.on('offline', () => {
+                    updateMqttStatusBadge('disconnected', 'Офлайн');
+                });
+            } catch(err) {
+                updateMqttStatusBadge('disconnected', 'Ошибка WS');
+            }
+        }
+
+        function updateMqttStatusBadge(status, text) {
+            const badge = document.getElementById('mqtt-status-badge');
+            const dot = document.getElementById('mqtt-dot');
+            const txt = document.getElementById('mqtt-text');
+
+            txt.innerText = text;
+
+            if (status === 'connected') {
+                badge.className = "flex items-center space-x-1.5 px-2.5 sm:px-3 py-1.5 rounded-full text-[11px] sm:text-xs font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 border border-emerald-300/80 dark:border-emerald-700/80 transition-all cursor-pointer hover:opacity-90";
+                dot.className = "w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0";
+            } else if (status === 'connecting') {
+                badge.className = "flex items-center space-x-1.5 px-2.5 sm:px-3 py-1.5 rounded-full text-[11px] sm:text-xs font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border border-amber-300/80 dark:border-amber-700/80 transition-all cursor-pointer hover:opacity-90";
+                dot.className = "w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse shrink-0";
+            } else {
+                badge.className = "flex items-center space-x-1.5 px-2.5 sm:px-3 py-1.5 rounded-full text-[11px] sm:text-xs font-semibold bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300 border border-rose-300/80 dark:border-rose-700/80 transition-all cursor-pointer hover:opacity-90";
+                dot.className = "w-2.5 h-2.5 rounded-full bg-rose-500 shrink-0";
+            }
+        }
+
+        /**
+         * ОБРАБОТЧИК ВХОДЯЩИХ MQTT СООБЩЕНИЙ (КЛЮЧЕВАЯ ИСПРАВЛЕННАЯ ЧАСТЬ ДЛЯ ДИСТАНЦИОННОГО УПРАВЛЕНИЯ)
+         */
+        function handleIncomingMqttMessage(topic, payloadStr) {
+            // 1. Уличный физический датчик
+            if (topic === state.topics.outdoorSensor) {
+                const val = parseFloat(payloadStr);
+                if (!isNaN(val)) {
+                    state.outdoorSensorTemp = val;
+                    updateUI();
+                } else {
+                    try {
+                        const json = JSON.parse(payloadStr);
+                        if (json.temperature !== undefined) {
+                            state.outdoorSensorTemp = parseFloat(json.temperature);
+                            updateUI();
+                        }
+                    } catch(e) {}
+                }
+            }
+
+            // 2. Прогноз погоды
+            if (topic === state.topics.forecast) {
+                try {
+                    const json = JSON.parse(payloadStr);
+                    if (json.temperature !== undefined) {
+                        state.forecastTemp = parseFloat(json.temperature);
+                        state.forecastData = json;
+                        updateUI();
+                    }
+                } catch(e) {}
+            }
+
+            // 3. Дистанционное переключение ПЗА (Топик команды или статуса)
+            if (topic === state.topics.pzaCmd || topic === state.topics.pzaStatus) {
+                const str = payloadStr.trim().toUpperCase();
+                let newPzaState = state.pzaEnabled;
+
+                if (str === 'ON' || str === '1' || str === 'TRUE' || str === 'ENABLE' || str === 'ENABLED') {
+                    newPzaState = true;
+                } else if (str === 'OFF' || str === '0' || str === 'FALSE' || str === 'DISABLE' || str === 'DISABLED') {
+                    newPzaState = false;
+                } else {
+                    try {
+                        const json = JSON.parse(payloadStr);
+                        if (json.state !== undefined) {
+                            const s = String(json.state).toUpperCase();
+                            newPzaState = (s === 'ON' || s === '1' || s === 'TRUE');
+                        } else if (json.enabled !== undefined) {
+                            newPzaState = Boolean(json.enabled);
+                        }
+                    } catch(e) {}
+                }
+
+                if (newPzaState !== state.pzaEnabled) {
+                    setPzaState(newPzaState, false); // false = не циклировать повторную публикацию
+                    showToast(`ПЗА дистанционно переключена из MQTT: ${newPzaState ? 'ВКЛ' : 'ВЫКЛ'}`, 'info');
+                }
+            }
+        }
+
+        let publishTimer = null;
+        function publishPzaSetpointsDebounced() {
+            if (publishTimer) clearTimeout(publishTimer);
+            publishTimer = setTimeout(() => {
+                publishPzaSetpointsImmediate();
+            }, 800);
+        }
+
+        function publishPzaSetpointsImmediate() {
+            if (!mqttClient || !mqttClient.connected) return;
+            if (!state.pzaEnabled) return;
+
+            const calcOut = getCalculatedOutdoorTemp();
+            const targetC1 = calculateTargetFlowTemp(calcOut, 'C1');
+            const targetC23 = calculateTargetFlowTemp(calcOut, 'FLOOR');
+
+            mqttClient.publish(state.topics.c1Setpoint, targetC1.toFixed(1), { qos: 1, retain: true });
+            mqttClient.publish(state.topics.c2Setpoint, targetC23.toFixed(1), { qos: 1, retain: true });
+            mqttClient.publish(state.topics.c3Setpoint, targetC23.toFixed(1), { qos: 1, retain: true });
+        }
+
+        function publishPzaSettingsManual() {
+            if (!mqttClient || !mqttClient.connected) {
+                showToast('Нет подключения к MQTT брокеру', 'error');
+                return;
+            }
+
+            publishPzaSetpointsImmediate();
+            showToast('Уставки принудительно отправлены в MQTT!', 'success');
+        }
+
+        async function fetchOpenMeteoWeather() {
+            showToast('Запрос метеоданных...', 'info');
+
+            try {
+                const url = `https://api.open-meteo.com/v1/forecast?latitude=${state.city.lat}&longitude=${state.city.lon}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&hourly=temperature_2m&daily=temperature_2m_max,temperature_2m_min&timezone=auto`;
+                const resp = await fetch(url);
+                const data = await resp.json();
+
+                if (data && data.current) {
+                    state.forecastTemp = parseFloat(data.current.temperature_2m.toFixed(1));
+                    state.forecastData = data;
+
+                    // Обновляем визуал карточки погоды
+                    document.getElementById('val-forecast-temp').innerText = state.forecastTemp.toFixed(1);
+                    if (data.daily) {
+                        document.getElementById('val-min-temp').innerText = Math.round(data.daily.temperature_2m_min[0]);
+                        document.getElementById('val-max-temp').innerText = Math.round(data.daily.temperature_2m_max[0]);
+                    }
+
+                    document.getElementById('val-city-name-card').innerText = state.city.name.replace('г. ', '');
+                    document.getElementById('header-location-name').innerText = state.city.name;
+
+                    // Публикуем в MQTT топик прогноза
+                    if (mqttClient && mqttClient.connected) {
+                        mqttClient.publish(state.topics.forecast, JSON.stringify({
+                            city: state.city.name,
+                            temperature: state.forecastTemp,
+                            humidity: data.current.relative_humidity_2m,
+                            wind: data.current.wind_speed_10m,
+                            updated: new Date().toISOString()
+                        }), { retain: true });
+                    }
+
+                    saveStateToStorage();
+                    updateUI();
+                    showToast(`Погода обновлена: ${state.forecastTemp}°C`, 'success');
+                }
+            } catch(e) {
+                showToast('Ошибка получения погоды с Open-Meteo', 'error');
+            }
+        }
+
+        function openTopicsModal() {
+            document.getElementById('input-topic-outdoor').value = state.topics.outdoorSensor;
+            document.getElementById('input-topic-forecast').value = state.topics.forecast;
+            document.getElementById('input-topic-pza-cmd').value = state.topics.pzaCmd;
+            document.getElementById('input-topic-pza-status').value = state.topics.pzaStatus;
+            document.getElementById('input-topic-c1').value = state.topics.c1Setpoint;
+            document.getElementById('input-topic-c2').value = state.topics.c2Setpoint;
+            document.getElementById('input-topic-c3').value = state.topics.c3Setpoint;
+
+            document.getElementById('topicsConfigModal').classList.remove('hidden');
+        }
+
+        function closeTopicsModal() {
+            document.getElementById('topicsConfigModal').classList.add('hidden');
+        }
+
+        function saveTopicsConfig() {
+            state.topics.outdoorSensor = document.getElementById('input-topic-outdoor').value.trim();
+            state.topics.forecast = document.getElementById('input-topic-forecast').value.trim();
+            state.topics.pzaCmd = document.getElementById('input-topic-pza-cmd').value.trim();
+            state.topics.pzaStatus = document.getElementById('input-topic-pza-status').value.trim();
+            state.topics.c1Setpoint = document.getElementById('input-topic-c1').value.trim();
+            state.topics.c2Setpoint = document.getElementById('input-topic-c2').value.trim();
+            state.topics.c3Setpoint = document.getElementById('input-topic-c3').value.trim();
+
+            saveStateToStorage();
+            closeTopicsModal();
+            updateUI();
+            initMqtt(); // Переподключаем с новыми топиками
+            showToast('Конфигурация топиков сохранена', 'success');
+        }
+
+        function openLocationModal() {
+            document.getElementById('locationModal').classList.remove('hidden');
+        }
+
+        function closeLocationModal() {
+            document.getElementById('locationModal').classList.add('hidden');
+        }
+
+        function selectPresetCity(name, lat, lon) {
+            state.city = { name: `г. ${name}`, lat: lat, lon: lon };
+            saveStateToStorage();
+            closeLocationModal();
+            fetchOpenMeteoWeather();
+        }
+
+        function searchCityDebounce() {
+            if (citySearchTimer) clearTimeout(citySearchTimer);
+            citySearchTimer = setTimeout(async () => {
+                const query = document.getElementById('location-search-input').value.trim();
+                const container = document.getElementById('city-search-results');
+
+                if (query.length < 2) {
+                    container.innerHTML = '';
+                    return;
+                }
+
+                try {
+                    const resp = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=5&language=ru&format=json`);
+                    const data = await resp.json();
+
+                    if (data.results && data.results.length > 0) {
+                        let html = '';
+                        data.results.forEach(res => {
+                            const cName = res.name;
+                            const country = res.country || '';
+                            html += `
+                                <div onclick="selectPresetCity('${cName}', ${res.latitude}, ${res.longitude})" class="p-2.5 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer rounded-xl flex justify-between items-center text-xs">
+                                    <span class="font-bold">${cName} (${country})</span>
+                                    <span class="text-slate-400 font-mono text-[10px]">${res.latitude.toFixed(2)}, ${res.longitude.toFixed(2)}</span>
+                                </div>
+                            `;
+                        });
+                        container.innerHTML = html;
+                    } else {
+                        container.innerHTML = '<p class="text-xs text-slate-400 p-2">Город не найден</p>';
+                    }
+                } catch(e) {}
+            }, 400);
+        }
+
+        function openForecastVisualizerModal() {
+            document.getElementById('forecast-modal-city').innerText = state.city.name;
+            document.getElementById('cfg-forecast-topic-input').value = state.topics.forecast;
+
+            if (state.forecastData) {
+                document.getElementById('forecast-json-code').innerText = JSON.stringify(state.forecastData, null, 2);
+                document.getElementById('vis-curr-temp').innerText = `${state.forecastTemp.toFixed(1)} °C`;
+                if (state.forecastData.current) {
+                    document.getElementById('vis-curr-humidity').innerText = `${state.forecastData.current.relative_humidity_2m}%`;
+                    document.getElementById('vis-curr-wind').innerText = `${state.forecastData.current.wind_speed_10m} км/ч`;
+                }
+
+                // Дневной прогноз
+                if (state.forecastData.daily) {
+                    const dailyCont = document.getElementById('daily-forecast-container');
+                    let html = '';
+                    for (let i = 0; i < Math.min(3, state.forecastData.daily.time.length); i++) {
+                        const date = state.forecastData.daily.time[i];
+                        const min = Math.round(state.forecastData.daily.temperature_2m_min[i]);
+                        const max = Math.round(state.forecastData.daily.temperature_2m_max[i]);
+                        html += `
+                            <div class="p-3 rounded-xl bg-slate-100 dark:bg-slate-800/80 text-center space-y-1">
+                                <span class="text-[11px] font-bold text-slate-400 block">${date}</span>
+                                <strong class="text-sm font-extrabold block">${min}° / ${max}°C</strong>
+                            </div>
+                        `;
+                    }
+                    dailyCont.innerHTML = html;
+                }
+            }
+
+            document.getElementById('forecastVisualizerModal').classList.remove('hidden');
+        }
+
+        function closeForecastVisualizerModal() {
+            document.getElementById('forecastVisualizerModal').classList.add('hidden');
+        }
+
+        function setForecastModalTab(tab) {
+            document.getElementById('f-content-vis').classList.toggle('hidden', tab !== 'VISUAL');
+            document.getElementById('f-content-topic').classList.toggle('hidden', tab !== 'TOPIC');
+            document.getElementById('f-tab-raw-box').classList.toggle('hidden', tab !== 'RAW');
+
+            document.getElementById('f-tab-vis').className = (tab === 'VISUAL') ? "flex-1 py-3 border-b-2 border-indigo-600 text-indigo-600 dark:text-indigo-400 font-bold" : "flex-1 py-3 text-slate-500 border-b-2 border-transparent font-bold";
+            document.getElementById('f-tab-topic').className = (tab === 'TOPIC') ? "flex-1 py-3 border-b-2 border-indigo-600 text-indigo-600 dark:text-indigo-400 font-bold" : "flex-1 py-3 text-slate-500 border-b-2 border-transparent font-bold";
+            document.getElementById('f-tab-raw').className = (tab === 'RAW') ? "flex-1 py-3 border-b-2 border-indigo-600 text-indigo-600 dark:text-indigo-400 font-bold" : "flex-1 py-3 text-slate-500 border-b-2 border-transparent font-bold";
+        }
+
+        function saveForecastTopicFromModal() {
+            state.topics.forecast = document.getElementById('cfg-forecast-topic-input').value.trim();
+            saveStateToStorage();
+            closeForecastVisualizerModal();
+            updateUI();
+            showToast('Топик прогноза сохранен', 'success');
+        }
+
+        function openConfigModal() {
+            document.getElementById('mqtt-host').value = state.broker.host;
+            document.getElementById('mqtt-port').value = state.broker.port;
+            document.getElementById('mqtt-path').value = state.broker.path;
+            document.getElementById('mqtt-user').value = state.broker.user;
+            document.getElementById('mqtt-pass').value = state.broker.pass;
+            document.getElementById('mqtt-clientid').value = state.broker.clientId;
+            document.getElementById('mqtt-ssl').checked = state.broker.ssl;
+
+            document.getElementById('mqttConfigModal').classList.remove('hidden');
+        }
+
+        function closeConfigModal() {
+            document.getElementById('mqttConfigModal').classList.add('hidden');
+        }
+
+        function saveMqttConfig() {
+            state.broker.host = document.getElementById('mqtt-host').value.trim();
+            state.broker.port = parseInt(document.getElementById('mqtt-port').value) || 9001;
+            state.broker.path = document.getElementById('mqtt-path').value.trim();
+            state.broker.user = document.getElementById('mqtt-user').value.trim();
+            state.broker.pass = document.getElementById('mqtt-pass').value.trim();
+            state.broker.clientId = document.getElementById('mqtt-clientid').value.trim();
+            state.broker.ssl = document.getElementById('mqtt-ssl').checked;
+
+            saveStateToStorage();
+            closeConfigModal();
+            initMqtt();
+        }
+
+        function showToast(text, type = 'info') {
+            const toast = document.getElementById('toast-message');
+            const toastTxt = document.getElementById('toast-text');
+            const toastIcon = document.getElementById('toast-icon');
+
+            toastTxt.innerText = text;
+
+            if (type === 'success') {
+                toastIcon.className = "fa-solid fa-circle-check text-emerald-400 text-xl";
+            } else if (type === 'error') {
+                toastIcon.className = "fa-solid fa-circle-exclamation text-rose-400 text-xl";
+            } else if (type === 'warning') {
+                toastIcon.className = "fa-solid fa-triangle-exclamation text-amber-400 text-xl";
+            } else {
+                toastIcon.className = "fa-solid fa-circle-info text-blue-400 text-xl";
+            }
+
+            toast.classList.remove('hidden');
+            setTimeout(() => {
+                toast.classList.add('hidden');
+            }, 3500);
+        }
+
+        function toggleDarkMode() {
+            document.documentElement.classList.toggle('dark');
+            const isDark = document.documentElement.classList.contains('dark');
+            localStorage.setItem('pza_theme_dark', isDark ? '1' : '0');
+        }
+
+        function loadStateFromStorage() {
+            try {
+                const saved = localStorage.getItem(STORAGE_KEY);
+                if (saved) {
+                    const parsed = JSON.parse(saved);
+                    state = { ...state, ...parsed };
+                }
+
+                if (localStorage.getItem('pza_theme_dark') === '1') {
+                    document.documentElement.classList.add('dark');
+                }
+            } catch(e) {}
+        }
+
+        function saveStateToStorage() {
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+            } catch(e) {}
+        }
+
+        window.onload = function() {
+            loadStateFromStorage();
+            initChart();
+            updateUI();
+            initMqtt();
+            fetchOpenMeteoWeather();
+        };
+    </script>
+</body>
+</html>
